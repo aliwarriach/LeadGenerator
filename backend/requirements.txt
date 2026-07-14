@@ -1,0 +1,19 @@
+fastapi==0.139.0
+uvicorn[standard]==0.51.0
+sqlalchemy[asyncio]==2.0.51
+asyncpg==0.31.0
+alembic==1.18.5
+pydantic==2.13.4
+pydantic-settings==2.14.2
+
+playwright==1.49.0
+playwright-stealth==1.0.6
+setuptools==75.6.0  # provides pkg_resources, required by playwright-stealth 1.0.6 (removed in setuptools 81+)
+arq==0.26.3
+httpx==0.28.1
+python-Wappalyzer==0.3.1
+rapidfuzz==3.14.5
+phonenumbers==9.0.34
+
+pytest==9.1.1
+pytest-asyncio==1.4.0
