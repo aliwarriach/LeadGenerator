@@ -7,7 +7,8 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 
 from playwright.async_api import Page, async_playwright
 
-from app.scrapers.base_scraper import BaseScraper, ScraperConfig, ScraperError
+from app.scrapers.base_scraper import BaseScraper, ScrapeEventType, ScraperConfig, ScraperError
+from app.scrapers.domain_filters import is_business_domain
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +35,18 @@ _BLOCKED_PATH_SUBSTRINGS = (
 
 _PHONE_RE = re.compile(r"(\+?\d[\d\-\s()]{7,}\d)")
 _CATEGORY_RE = re.compile(r"Page\s*[·•]\s*([^\n|]+)")
+# Facebook's /about page renders phone numbers immediately before a "Mobile"
+# or "Phone" field label (no tel: links, no nearby "call"/"phone" keyword) —
+# e.g. "...Service area\n0321 4141862\nMobile\n...". This is a different
+# layout from the homepage body, which is why it needs its own pattern.
+_ABOUT_PHONE_RE = re.compile(r"(\+?\d[\d\-\s()]{7,}\d)\s*\n\s*(?:Mobile|Phone)\b", re.IGNORECASE)
 
 
 class FacebookScraper(BaseScraper):
     source = "facebook"
 
-    def __init__(self, config: ScraperConfig | None = None) -> None:
-        super().__init__(config)
-
     async def scrape(self, query: str, location: str) -> list[dict[str, Any]]:
+        await self._emit(ScrapeEventType.SCRAPER_STARTED, f"Starting facebook scraper for {query!r} in {location!r}")
         results: list[dict[str, Any]] = []
         async with async_playwright() as playwright:
             async with self.browser_session(playwright) as context:
@@ -55,11 +59,17 @@ class FacebookScraper(BaseScraper):
                         page=page,
                     )
                 except ScraperError:
+                    # Re-raised rather than swallowed to an empty list: a failed
+                    # search (timeout, CAPTCHA, layout change) is structurally
+                    # different from "this niche genuinely has zero listings",
+                    # and the caller needs that distinction to drive cooldown.
                     logger.error("Google search for Facebook pages failed for %r/%r", query, location)
-                    return results
+                    raise
 
                 for link in links[: self.config.max_results]:
-                    await self.rate_limit_delay()
+                    await self._check_stop()
+                    delay = await self.rate_limit_delay()
+                    await self._emit(ScrapeEventType.RATE_LIMIT_DELAY, f"Rate limit delay ({delay:.1f}s)", seconds=delay)
                     lead = await self._safe_visit_page(page, link, query, location)
                     if lead:
                         results.append(lead)
@@ -72,6 +82,7 @@ class FacebookScraper(BaseScraper):
         search_query = f'site:facebook.com "{query}" "{location}"'
         url = f"https://www.google.com/search?q={quote_plus(search_query)}"
         await page.goto(url, wait_until="domcontentloaded")
+        await self.detect_captcha(page)
         await self._dismiss_consent_dialog(page)
         await self.human_delay(1.0, 2.0)
         await page.wait_for_selector(SEARCH_RESULTS_SELECTOR, timeout=self.config.navigation_timeout_ms)
@@ -137,7 +148,8 @@ class FacebookScraper(BaseScraper):
                 op_name=f"facebook_extract:{url}",
                 page=page,
             )
-        except ScraperError:
+        except ScraperError as exc:
+            await self._emit(ScrapeEventType.WARNING, f"Failed to extract a Facebook page: {exc}")
             return None
 
     async def _extract_page(self, page: Page, url: str, query: str, location: str) -> dict[str, Any]:
@@ -148,13 +160,16 @@ class FacebookScraper(BaseScraper):
         name = await self._extract_name(page)
         if not name:
             raise ScraperError(f"No page name found at {url} — likely gated or removed")
+        await self._emit(ScrapeEventType.BUSINESS_PROCESSING, f'Scraping business "{name}"', business_name=name)
 
         og_description = await self._meta_content(page, 'meta[property="og:description"]')
         body_text = await self._safe_inner_text(page, "body")
 
         category = await self._extract_category(page, body_text)
         website = await self._extract_website(page)
-        phone = self._extract_phone(body_text or og_description or "")
+        phone = await self._extract_phone_from_about(page, url)
+        if not phone:
+            phone = self._extract_phone(body_text or og_description or "")
 
         raw_data: dict[str, Any] = {
             "query": query,
@@ -196,12 +211,12 @@ class FacebookScraper(BaseScraper):
                 return match.group(1).strip()
         return None
 
-    _NON_WEBSITE_DOMAINS = ("facebook.com", "fb.com", "instagram.com", "whatsapp.com", "messenger.com")
-
     async def _extract_website(self, page: Page) -> str | None:
         # Facebook wraps outbound links through l.facebook.com/l.php?u=<real url>, so
         # that redirector must stay in the candidate set even though it's a
-        # facebook.com host — everything else on _NON_WEBSITE_DOMAINS is excluded.
+        # facebook.com host — but the unwrapped target still has to clear the
+        # same is_business_domain check as everything else (Facebook proxies
+        # links to a page's LinkedIn/Instagram/etc through here too).
         try:
             anchors = page.locator('a[href^="http"]')
             count = await anchors.count()
@@ -212,15 +227,34 @@ class FacebookScraper(BaseScraper):
                 if "l.facebook.com/l.php" in href:
                     parsed = urlparse(href)
                     target = parse_qs(parsed.query).get("u")
-                    if target:
+                    if target and is_business_domain(target[0]):
                         return target[0]
                     continue
-                if any(domain in href for domain in self._NON_WEBSITE_DOMAINS):
+                if not is_business_domain(href):
                     continue
                 return href
         except Exception as exc:
             logger.debug("Website extraction failed: %s", exc)
         return None
+
+    async def _extract_phone_from_about(self, page: Page, page_url: str) -> str | None:
+        """Visit the page's /about subpage and pull the phone number from
+        Facebook's contact-info field layout (number immediately followed by
+        a "Mobile"/"Phone" label). Best-effort: any failure here just falls
+        back to the homepage-body regex, it must never fail the whole lead.
+        """
+        about_url = page_url.rstrip("/") + "/about"
+        try:
+            await page.goto(about_url, wait_until="domcontentloaded")
+            await self.human_delay(0.5, 1.2)
+            body_text = await self._safe_inner_text(page, "body")
+        except Exception as exc:
+            logger.debug("Failed to load /about for phone extraction (%s): %s", page_url, exc)
+            return None
+        if not body_text:
+            return None
+        match = _ABOUT_PHONE_RE.search(body_text)
+        return match.group(1).strip() if match else None
 
     @staticmethod
     def _extract_phone(text: str) -> str | None:

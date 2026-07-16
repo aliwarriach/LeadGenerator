@@ -4,32 +4,40 @@ import Card from '../../components/ui/Card'
 import Button from '../../components/ui/Button'
 import ChatMessage from './ChatMessage'
 import TypingIndicator from './TypingIndicator'
-import { CHAT_SUBJECT, INITIAL_MESSAGES, AI_REPLIES } from '../../constants/askai'
+import { useChatHistory } from '../../hooks/useChatHistory'
+import { useSendChatMessage } from '../../hooks/useSendChatMessage'
+import { useLead } from '../../hooks/useLead'
 
-export default function ChatPanel() {
-  const [messages, setMessages] = useState(INITIAL_MESSAGES)
+function toBlocks(content) {
+  return [{ type: 'p', text: content }]
+}
+
+export default function ChatPanel({ leadId }) {
   const [input, setInput] = useState('')
-  const [typing, setTyping] = useState(false)
-  const nextId = useRef(INITIAL_MESSAGES.length + 1)
-  const replyIndex = useRef(0)
   const bodyRef = useRef(null)
+  const leadQuery = useLead(leadId)
+  const historyQuery = useChatHistory(leadId)
+  const sendMutation = useSendChatMessage(leadId)
 
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight })
-  }, [messages, typing])
+  }, [historyQuery.data, sendMutation.isPending])
 
   function send() {
     const text = input.trim()
-    if (!text) return
-    setMessages((m) => [...m, { id: nextId.current++, role: 'user', blocks: [{ type: 'p', text }] }])
+    if (!text || sendMutation.isPending) return
     setInput('')
-    setTyping(true)
-    setTimeout(() => {
-      const reply = AI_REPLIES[replyIndex.current % AI_REPLIES.length]
-      replyIndex.current += 1
-      setTyping(false)
-      setMessages((m) => [...m, { id: nextId.current++, role: 'assistant', blocks: [{ type: 'p', text: reply }] }])
-    }, 1100)
+    sendMutation.mutate(text, {
+      onError: () => setInput(text),
+    })
+  }
+
+  if (!leadId) {
+    return (
+      <Card className="grid h-[600px] place-items-center px-5 text-center text-[13px] text-txt-mute">
+        No lead selected — open Ask AI from a business row to start a conversation.
+      </Card>
+    )
   }
 
   return (
@@ -39,15 +47,20 @@ export default function ChatPanel() {
           <Sparkles className="h-4 w-4 text-violet" />
         </div>
         <div>
-          <div className="text-[13.5px] font-semibold text-white">{CHAT_SUBJECT.title}</div>
-          <div className="text-[11px] text-txt-mute">{CHAT_SUBJECT.context}</div>
+          <div className="text-[13.5px] font-semibold text-white">{leadQuery.data?.name ?? 'Loading…'} — assistant</div>
+          <div className="text-[11px] text-txt-mute">Grounded on this business's data + latest audit</div>
         </div>
       </div>
       <div ref={bodyRef} className="flex flex-1 flex-col gap-3.5 overflow-y-auto p-5">
-        {messages.map((m) => (
-          <ChatMessage key={m.id} role={m.role} blocks={m.blocks} />
+        {historyQuery.isLoading && <p className="text-[13px] text-txt-mute">Loading conversation…</p>}
+        {historyQuery.isError && <p className="text-[13px] text-red">{historyQuery.error.message}</p>}
+        {historyQuery.data?.length === 0 && (
+          <p className="text-[13px] text-txt-mute">Ask anything about this business to get started.</p>
+        )}
+        {historyQuery.data?.map((m, i) => (
+          <ChatMessage key={i} role={m.role} blocks={toBlocks(m.content)} />
         ))}
-        {typing && <TypingIndicator />}
+        {sendMutation.isPending && <TypingIndicator />}
       </div>
       <div className="flex gap-2.5 border-t border-line px-4 py-3.5">
         <input
@@ -56,9 +69,10 @@ export default function ChatPanel() {
           onKeyDown={(e) => e.key === 'Enter' && send()}
           placeholder="Ask about this business…"
           aria-label="Ask about this business"
+          maxLength={2000}
           className="flex-1 rounded-[10px] border border-line bg-ink-soft px-3.5 py-2.5 text-[13px] text-txt outline-none focus:border-violet"
         />
-        <Button onClick={send}>
+        <Button onClick={send} disabled={sendMutation.isPending || !input.trim()}>
           <Send className="h-3.5 w-3.5" /> Send
         </Button>
       </div>

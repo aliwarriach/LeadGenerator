@@ -6,7 +6,11 @@ import DiscoveryView from './features/discovery/DiscoveryView'
 import BusinessesView from './features/businesses/BusinessesView'
 import AuditView from './features/audit/AuditView'
 import AskAIView from './features/askai/AskAIView'
+import OutreachEditorView from './features/outreach/OutreachEditorView'
 import PipelineView from './features/pipeline/PipelineView'
+import RunMonitoringView from './features/runMonitoring/RunMonitoringView'
+import RunHistoryView from './features/runHistory/RunHistoryView'
+import JobQueueView from './features/jobQueue/JobQueueView'
 
 const VIEWS = {
   overview: OverviewView,
@@ -14,7 +18,11 @@ const VIEWS = {
   businesses: BusinessesView,
   audit: AuditView,
   askai: AskAIView,
+  'outreach-editor': OutreachEditorView,
   pipeline: PipelineView,
+  'run-monitoring': RunMonitoringView,
+  'run-history': RunHistoryView,
+  'job-queue': JobQueueView,
 }
 
 function App() {
