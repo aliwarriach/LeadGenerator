@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories import lead_repository
-from app.schemas.lead import LeadListResponse, LeadResponse, LeadSortBy, SortOrder
+from app.schemas.lead import LeadListResponse, LeadResponse, LeadSortBy, LeadUpdateRequest, SortOrder
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,23 @@ async def get_lead(session: AsyncSession, lead_id: uuid.UUID) -> LeadResponse:
         lead = await lead_repository.get_by_id(session, lead_id)
     except Exception as exc:
         logger.error("Failed to fetch lead %s", lead_id, exc_info=exc)
+        raise LeadServiceUnavailableError("Database connection failed") from exc
+
+    if lead is None:
+        raise LeadNotFoundError(f"Lead {lead_id} not found")
+    return LeadResponse.model_validate(lead)
+
+
+async def update_lead(session: AsyncSession, lead_id: uuid.UUID, update: LeadUpdateRequest) -> LeadResponse:
+    try:
+        lead = await lead_repository.update_lead_pipeline(
+            session,
+            lead_id,
+            pipeline_stage=update.pipeline_stage,
+            estimated_revenue_level=update.estimated_revenue_level,
+        )
+    except Exception as exc:
+        logger.error("Failed to update lead %s", lead_id, exc_info=exc)
         raise LeadServiceUnavailableError("Database connection failed") from exc
 
     if lead is None:

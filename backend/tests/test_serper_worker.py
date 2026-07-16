@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+from app.scrapers.base_scraper import ScrapeEventType
 from app.scrapers.serper_worker import SerperConfig, SerperWorker
 
 
@@ -115,3 +116,39 @@ async def test_scrape_treats_429_as_retryable():
 
     assert call_count == 2
     assert results == []
+
+
+async def test_scrape_emits_scraper_started_event():
+    events: list[tuple] = []
+
+    async def on_event(event_type, message, payload):
+        events.append((event_type, message, payload))
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"organic": []})
+
+    worker = SerperWorker(
+        SerperConfig(api_key="test-key"), http_client=_client_with_handler(handler), on_event=on_event
+    )
+    await worker.scrape("plumbers", "Karachi")
+
+    assert events
+    assert events[0][0] == ScrapeEventType.SCRAPER_STARTED
+
+
+async def test_scrape_without_api_key_still_emits_started_event_before_skipping():
+    events: list[tuple] = []
+
+    async def on_event(event_type, message, payload):
+        events.append((event_type, message, payload))
+
+    worker = SerperWorker(SerperConfig(api_key=None), on_event=on_event)
+    results = await worker.scrape("plumbers", "Karachi")
+
+    assert results == []
+    assert events[0][0] == ScrapeEventType.SCRAPER_STARTED
+
+
+async def test_scrape_without_callback_does_not_raise():
+    worker = SerperWorker(SerperConfig(api_key=None))
+    assert await worker.scrape("plumbers", "Karachi") == []

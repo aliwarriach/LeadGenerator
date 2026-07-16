@@ -7,15 +7,31 @@ from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, TypeVar
 
-from playwright.async_api import Browser, BrowserContext, Page, Playwright
+from playwright.async_api import BrowserContext, Page, Playwright
 from playwright_stealth import StealthConfig
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+class ScrapeEventType(StrEnum):
+    SCRAPER_STARTED = "scraper_started"
+    BUSINESS_PROCESSING = "business_processing"
+    RATE_LIMIT_DELAY = "rate_limit_delay"
+    ERROR = "error"
+    WARNING = "warning"
+
+
+# `message` positional, then arbitrary structured payload (business_name=...,
+# seconds=...) — kept loose here since scrapers stay decoupled from the
+# worker-layer schema; the worker's adapter maps this onto DiscoveryEventType.
+ScrapeEventCallback = Callable[[ScrapeEventType, str, dict[str, Any]], Awaitable[None]]
+ShouldStopCallback = Callable[[], Awaitable[bool]]
 
 _DEFAULT_USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -57,6 +73,9 @@ class ScraperConfig:
     user_agents: list[str] = field(default_factory=lambda: list(_DEFAULT_USER_AGENTS))
 
     screenshot_dir: str = "screenshots"
+    # On-disk Chromium profile directory, keyed by scraper source — see
+    # _launch_persistent_context for why this exists.
+    profile_dir: str = "browser_profiles"
 
     @property
     def proxy(self) -> dict[str, str] | None:
@@ -74,6 +93,31 @@ class ScraperError(Exception):
     """Raised when a scrape run fails after exhausting retries."""
 
 
+class CaptchaDetectedError(ScraperError):
+    """Raised when a CAPTCHA/anti-bot interstitial is detected instead of the
+    page actually navigated to. Deliberately not worth retrying — the block
+    doesn't clear itself within a single job, so with_retry fails fast on
+    this instead of burning its normal retry budget against it."""
+
+
+class JobStoppedError(Exception):
+    """Raised when a user-requested stop is observed mid-scrape.
+
+    Deliberately NOT a ScraperError subclass — a stop is not a scrape
+    failure, and must not trigger the anti-bot cooldown escalation the way a
+    real CAPTCHA/timeout/selector-change does (see discovery_worker.py's
+    _run_browser_scrape_job, which checks for this before ScraperError)."""
+
+
+_CAPTCHA_URL_MARKERS = ("google.com/sorry", "/sorry/index")
+_CAPTCHA_CONTENT_MARKERS = (
+    "unusual traffic from your computer network",
+    'id="captcha-form"',
+    "g-recaptcha",
+    "recaptcha/api.js",
+)
+
+
 class BaseScraper(ABC):
     """Shared Playwright lifecycle, stealth setup, and human-behavior helpers.
 
@@ -83,35 +127,70 @@ class BaseScraper(ABC):
 
     source: str
 
-    def __init__(self, config: ScraperConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: ScraperConfig | None = None,
+        *,
+        on_event: ScrapeEventCallback | None = None,
+        on_check_stop: ShouldStopCallback | None = None,
+    ) -> None:
         self.config = config or ScraperConfig()
+        self._on_event = on_event
+        self._on_check_stop = on_check_stop
+
+    # ---- progress reporting / cooperative cancellation -------------------
+
+    async def _emit(self, event_type: ScrapeEventType, message: str, **payload: Any) -> None:
+        """Report a progress event to the caller-supplied callback, if any.
+
+        Swallowed on failure — a reporting hiccup must never break the
+        scrape, the same guarantee JobTracker itself makes on the other end.
+        """
+        if self._on_event is None:
+            return
+        try:
+            await self._on_event(event_type, message, payload)
+        except Exception as exc:  # noqa: BLE001 - reporting must never break the scrape
+            logger.warning("Failed to emit scrape event %r: %s", event_type, exc)
+
+    async def _check_stop(self) -> None:
+        """Raise JobStoppedError if the caller-supplied stop check reports
+        the job was cancelled. A no-op when no callback was supplied."""
+        if self._on_check_stop is None:
+            return
+        if await self._on_check_stop():
+            raise JobStoppedError(f"{self.source} scraper stopped by user request")
 
     # ---- lifecycle -----------------------------------------------------
 
     @asynccontextmanager
     async def browser_session(self, playwright: Playwright) -> AsyncIterator[BrowserContext]:
-        browser = await self._launch_browser(playwright)
-        context = await self.create_stealth_context(browser)
+        context = await self._launch_persistent_context(playwright)
+        context.set_default_navigation_timeout(self.config.navigation_timeout_ms)
+        context.set_default_timeout(self.config.navigation_timeout_ms)
         try:
             yield context
         finally:
             await context.close()
-            await browser.close()
 
-    async def _launch_browser(self, playwright: Playwright) -> Browser:
-        return await playwright.chromium.launch(
-            headless=self.config.headless,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--disable-dev-shm-usage",
-                "--no-sandbox",
-            ],
-        )
+    async def _launch_persistent_context(self, playwright: Playwright) -> BrowserContext:
+        """Launch with an on-disk Chromium profile instead of a fresh,
+        throwaway context every run.
 
-    async def create_stealth_context(self, browser: Browser) -> BrowserContext:
-        """Create a browser context with a realistic, randomized fingerprint."""
+        No proxy budget means no IP rotation — this doesn't address that.
+        What it does address: a brand-new, cookie-less, history-less session
+        on *every single run* is itself a bot signal Google/Facebook weigh,
+        independent of IP. Reusing a profile across runs means cookies and
+        local storage accumulate like a real recurring visitor's would.
+        Keyed by `self.source` so Google Maps and Facebook keep separate
+        profiles rather than sharing one.
+        """
+        profile_path = Path(self.config.profile_dir) / self.source
+        profile_path.mkdir(parents=True, exist_ok=True)
         user_agent = random.choice(self.config.user_agents)
-        context = await browser.new_context(
+        return await playwright.chromium.launch_persistent_context(
+            str(profile_path),
+            headless=self.config.headless,
             viewport=self.config.viewport,
             user_agent=user_agent,
             locale=self.config.locale,
@@ -119,10 +198,12 @@ class BaseScraper(ABC):
             geolocation=self.config.geolocation,
             permissions=["geolocation"],
             proxy=self.config.proxy,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+            ],
         )
-        context.set_default_navigation_timeout(self.config.navigation_timeout_ms)
-        context.set_default_timeout(self.config.navigation_timeout_ms)
-        return context
 
     async def new_stealth_page(self, context: BrowserContext) -> Page:
         page = await context.new_page()
@@ -143,8 +224,10 @@ class BaseScraper(ABC):
         hi = self.config.action_delay_max if max_s is None else max_s
         await asyncio.sleep(random.uniform(lo, hi))
 
-    async def rate_limit_delay(self) -> None:
-        await asyncio.sleep(random.uniform(self.config.rate_limit_min, self.config.rate_limit_max))
+    async def rate_limit_delay(self) -> float:
+        delay = random.uniform(self.config.rate_limit_min, self.config.rate_limit_max)
+        await asyncio.sleep(delay)
+        return delay
 
     async def search_delay(self) -> None:
         await asyncio.sleep(random.uniform(self.config.search_delay_min, self.config.search_delay_max))
@@ -192,6 +275,28 @@ class BaseScraper(ABC):
                 await page.mouse.wheel(0, delta)
             await asyncio.sleep(random.uniform(0.3, 1.1))
 
+    # ---- bot-detection ----------------------------------------------------
+
+    async def detect_captcha(self, page: Page) -> None:
+        """Raise CaptchaDetectedError if `page` is a CAPTCHA/anti-bot
+        interstitial rather than the page actually navigated to.
+
+        Call this right after navigation, before waiting on a real selector —
+        a CAPTCHA page is still a 200 OK, so without this check the caller
+        would otherwise sit out a full navigation_timeout_ms waiting for a
+        selector that will never appear, then retry into the same wall.
+        """
+        url = page.url.lower()
+        if any(marker in url for marker in _CAPTCHA_URL_MARKERS):
+            raise CaptchaDetectedError(f"CAPTCHA interstitial URL: {page.url}")
+
+        try:
+            content = (await page.content()).lower()
+        except Exception:
+            return  # can't confirm either way — let the normal selector wait decide
+        if any(marker in content for marker in _CAPTCHA_CONTENT_MARKERS):
+            raise CaptchaDetectedError(f"CAPTCHA markers found on {page.url}")
+
     # ---- retry / error handling -----------------------------------------
 
     async def with_retry(
@@ -204,12 +309,20 @@ class BaseScraper(ABC):
         """Run `func` with exponential backoff + jitter, up to `max_retries` attempts.
 
         Takes a screenshot (if `page` is given) and raises ScraperError once
-        retries are exhausted.
+        retries are exhausted. CaptchaDetectedError is the one exception that
+        skips this entirely — a CAPTCHA doesn't clear itself mid-job, so
+        retrying against it just wastes the retry budget and looks even more
+        like a bot; it's raised immediately on the first occurrence instead.
         """
         last_exc: Exception | None = None
         for attempt in range(1, self.config.max_retries + 1):
             try:
                 return await func()
+            except CaptchaDetectedError:
+                logger.error("%s: CAPTCHA/interstitial detected — aborting without retrying", op_name)
+                if page is not None:
+                    await self.screenshot_on_failure(page, op_name)
+                raise
             except Exception as exc:  # noqa: BLE001 - broad by design, retried/logged
                 last_exc = exc
                 logger.warning(

@@ -1,5 +1,5 @@
-from datetime import datetime
-from typing import Any, Literal
+import uuid
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -41,24 +41,13 @@ class DiscoveryRequest(BaseModel):
 class DiscoveryJobRef(BaseModel):
     source: Literal["google_maps", "facebook", "serper"]
     city: str
-    job_id: str
+    job_id: uuid.UUID
 
 
 class DiscoveryResponse(BaseModel):
+    run_id: uuid.UUID
     country: str
     city: str
     custom_niche: str
     min_rating: float | None
     jobs: list[DiscoveryJobRef]
-
-
-class JobStatusResponse(BaseModel):
-    job_id: str
-    status: Literal["deferred", "queued", "in_progress", "complete", "not_found"]
-    function: str | None = None
-    enqueue_time: datetime | None = None
-    start_time: datetime | None = None
-    finish_time: datetime | None = None
-    success: bool | None = None
-    result: dict[str, Any] | None = None
-    error: str | None = None

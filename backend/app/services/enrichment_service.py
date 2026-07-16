@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 _EMPTY_ENRICHMENT: dict[str, Any] = {
     "website_score": None,
     "website_score_details": None,
+    "pagespeed_score": None,
+    "seo_score": None,
+    "performance_issues": None,
     "emails": None,
     "tech_stack": None,
     "is_registered": None,
@@ -57,7 +60,7 @@ async def enrich_lead(client: httpx.AsyncClient, lead: dict[str, Any], settings:
     # standalone (e.g. called directly in tests) without that prior step.
     domain = lead.get("website_domain") or normalize_domain(website)
 
-    scores, emails, tech_stack, is_registered, logo_valid = await asyncio.gather(
+    pagespeed_result, emails, tech_stack, is_registered, logo_valid = await asyncio.gather(
         pagespeed_enricher.get_pagespeed_scores(
             client,
             website,
@@ -93,12 +96,19 @@ async def enrich_lead(client: httpx.AsyncClient, lead: dict[str, Any], settings:
             domain,
             base_url=settings.clearbit_logo_base_url,
             timeout_seconds=settings.clearbit_timeout_seconds,
-        ),
+        )
+        if settings.clearbit_logo_enabled
+        else _none(),
     )
+
+    scores = pagespeed_result.scores if pagespeed_result else None
 
     return {
         "website_score": pagespeed_enricher.compute_website_quality_score(scores) if scores else None,
         "website_score_details": scores,
+        "pagespeed_score": scores.get("performance") if scores else None,
+        "seo_score": scores.get("seo") if scores else None,
+        "performance_issues": pagespeed_result.performance_issues if pagespeed_result else None,
         "emails": emails,
         "tech_stack": tech_stack,
         "is_registered": is_registered,

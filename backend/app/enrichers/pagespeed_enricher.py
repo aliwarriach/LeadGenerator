@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 import httpx
 
@@ -13,6 +14,31 @@ logger = logging.getLogger(__name__)
 _REQUEST_CATEGORIES = ("PERFORMANCE", "SEO", "BEST_PRACTICES")
 _RESPONSE_CATEGORY_KEYS = ("performance", "seo", "best-practices")
 
+# Lighthouse audits scored below this are surfaced as performance_issues.
+# 0.9 is Lighthouse's own "passing" cutoff (score bands: 0.9-1 green,
+# 0.5-0.89 orange, 0-0.49 red) — anything under it is a real opportunity.
+_FAILING_AUDIT_THRESHOLD = 0.9
+
+
+@dataclass
+class PageSpeedResult:
+    scores: dict[str, float]
+    performance_issues: list[str] | None
+
+
+def _extract_performance_issues(lighthouse_result: dict) -> list[str] | None:
+    audits = lighthouse_result.get("audits", {})
+    audit_refs = lighthouse_result.get("categories", {}).get("performance", {}).get("auditRefs", [])
+
+    titles: list[str] = []
+    for ref in audit_refs:
+        audit = audits.get(ref.get("id"), {})
+        score = audit.get("score")
+        title = audit.get("title")
+        if score is not None and score < _FAILING_AUDIT_THRESHOLD and title:
+            titles.append(title)
+    return titles or None
+
 
 async def get_pagespeed_scores(
     client: httpx.AsyncClient,
@@ -22,8 +48,9 @@ async def get_pagespeed_scores(
     base_url: str,
     strategy: str,
     timeout_seconds: float,
-) -> dict[str, float] | None:
-    """Fetch Lighthouse category scores (0-100) for `website`.
+) -> PageSpeedResult | None:
+    """Fetch Lighthouse category scores (0-100) and failing performance
+    audit titles for `website`.
 
     Returns None on any failure (invalid key, quota exceeded, unreachable
     site, malformed response) — PageSpeed is a nice-to-have enrichment, never
@@ -46,13 +73,18 @@ async def get_pagespeed_scores(
         return None
 
     try:
-        categories = data["lighthouseResult"]["categories"]
+        lighthouse_result = data["lighthouseResult"]
+        categories = lighthouse_result["categories"]
         scores: dict[str, float] = {}
         for key in _RESPONSE_CATEGORY_KEYS:
             score = categories.get(key, {}).get("score")
             if score is not None:
                 scores[key.replace("-", "_")] = round(score * 100, 1)
-        return scores or None
+        if not scores:
+            return None
+        return PageSpeedResult(
+            scores=scores, performance_issues=_extract_performance_issues(lighthouse_result)
+        )
     except (KeyError, TypeError) as exc:
         logger.warning("PageSpeed response for %s missing expected fields: %s", website, exc)
         return None

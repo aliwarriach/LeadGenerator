@@ -4,34 +4,15 @@ import asyncio
 import logging
 import random
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
-
 import httpx
 
-logger = logging.getLogger(__name__)
+from app.scrapers.base_scraper import ScrapeEventType
+from app.scrapers.domain_filters import is_business_domain
 
-# Directory/social/aggregator domains that show up constantly in organic search
-# results but aren't the business's own site — never worth counting as a
-# "website" (or spending PageSpeed/enrichment quota on later).
-_NON_BUSINESS_DOMAINS = (
-    "facebook.com",
-    "instagram.com",
-    "linkedin.com",
-    "twitter.com",
-    "x.com",
-    "youtube.com",
-    "pinterest.com",
-    "yelp.com",
-    "yellowpages.com",
-    "tripadvisor.com",
-    "indeed.com",
-    "glassdoor.com",
-    "wikipedia.org",
-    "whatsapp.com",
-    "messenger.com",
-)
+logger = logging.getLogger(__name__)
 
 _PHONE_RE = re.compile(r"(\+?\d[\d\-\s()]{7,}\d)")
 
@@ -65,11 +46,24 @@ class SerperWorker:
         self,
         config: SerperConfig | None = None,
         http_client: httpx.AsyncClient | None = None,
+        *,
+        on_event: Callable[[ScrapeEventType, str, dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
         self.config = config or SerperConfig()
         self._http_client = http_client
+        self._on_event = on_event
+
+    async def _emit(self, event_type: ScrapeEventType, message: str, **payload: Any) -> None:
+        if self._on_event is None:
+            return
+        try:
+            await self._on_event(event_type, message, payload)
+        except Exception as exc:  # noqa: BLE001 - reporting must never break the scrape
+            logger.warning("Failed to emit scrape event %r: %s", event_type, exc)
 
     async def scrape(self, query: str, location: str) -> list[dict[str, Any]]:
+        await self._emit(ScrapeEventType.SCRAPER_STARTED, f"Starting serper search for {query!r} in {location!r}")
+
         if not self.config.api_key:
             logger.warning("SERPER_API_KEY not configured — skipping serper source")
             return []
@@ -131,7 +125,7 @@ class SerperWorker:
             return None
 
         link = item.get("link")
-        website = link if self._is_business_domain(link) else None
+        website = link if is_business_domain(link) else None
         snippet = item.get("snippet")
         phone = self._extract_phone(snippet or "")
 
@@ -151,13 +145,6 @@ class SerperWorker:
             "has_website": bool(website),
             "raw_data": raw_data,
         }
-
-    @staticmethod
-    def _is_business_domain(url: str | None) -> bool:
-        if not url:
-            return False
-        netloc = urlparse(url).netloc.lower()
-        return bool(netloc) and not any(domain in netloc for domain in _NON_BUSINESS_DOMAINS)
 
     @staticmethod
     def _extract_phone(text: str) -> str | None:

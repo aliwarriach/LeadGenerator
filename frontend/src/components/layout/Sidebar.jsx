@@ -1,6 +1,7 @@
 import { Search } from 'lucide-react'
 import { NAV_SECTIONS, WORKSPACE_USER } from '../../constants/navigation'
 import { useViewStore } from '../../store/useViewStore'
+import ActiveRunBanner from './ActiveRunBanner'
 
 export default function Sidebar() {
   const view = useViewStore((s) => s.view)
@@ -16,6 +17,7 @@ export default function Sidebar() {
           Lead<span className="text-signal">Gen</span>
         </div>
       </div>
+      <ActiveRunBanner />
       <nav className="flex-1 px-3 py-1.5">
         {NAV_SECTIONS.map((section) => (
           <div key={section.label}>

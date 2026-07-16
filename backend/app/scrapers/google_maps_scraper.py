@@ -7,7 +7,7 @@ from urllib.parse import quote_plus
 
 from playwright.async_api import Page, async_playwright
 
-from app.scrapers.base_scraper import BaseScraper, ScraperConfig, ScraperError
+from app.scrapers.base_scraper import BaseScraper, ScrapeEventType, ScraperConfig, ScraperError
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +25,10 @@ MAX_SCROLL_ATTEMPTS = 25
 class GoogleMapsScraper(BaseScraper):
     source = "google_maps"
 
-    def __init__(self, config: ScraperConfig | None = None) -> None:
-        super().__init__(config)
-
     async def scrape(
         self, query: str, location: str, min_rating: float | None = None
     ) -> list[dict[str, Any]]:
-        results: list[dict[str, Any]] = []
+        await self._emit(ScrapeEventType.SCRAPER_STARTED, f"Starting google_maps scraper for {query!r} in {location!r}")
         async with async_playwright() as playwright:
             async with self.browser_session(playwright) as context:
                 page = await self.new_stealth_page(context)
@@ -42,15 +39,19 @@ class GoogleMapsScraper(BaseScraper):
                         page=page,
                     )
                 except ScraperError:
+                    # Re-raised rather than swallowed to an empty list: a failed
+                    # search (timeout, CAPTCHA, layout change) is structurally
+                    # different from "this niche genuinely has zero listings",
+                    # and the caller needs that distinction to drive cooldown.
                     logger.error("Google Maps search failed for %r in %r", query, location)
-                    return results
+                    raise
 
-                results = await self._collect_results(page, query, location, min_rating)
-        return results
+                return await self._collect_results(page, query, location, min_rating)
 
     async def _search(self, page: Page, query: str, location: str) -> None:
         url = f"https://www.google.com/maps/search/{quote_plus(query)}+in+{quote_plus(location)}"
         await page.goto(url, wait_until="domcontentloaded")
+        await self.detect_captcha(page)
         await self._dismiss_consent_dialog(page)
         await self.human_delay(1.0, 2.0)
 
@@ -86,6 +87,8 @@ class GoogleMapsScraper(BaseScraper):
         max_results = self.config.max_results
 
         while len(results) < max_results and index < max_results * 3:
+            await self._check_stop()
+
             listings = page.locator(LISTING_SELECTOR)
             count = await listings.count()
             if index >= count:
@@ -98,7 +101,8 @@ class GoogleMapsScraper(BaseScraper):
             if lead and self._meets_rating_threshold(lead, min_rating):
                 results.append(lead)
             index += 1
-            await self.rate_limit_delay()
+            delay = await self.rate_limit_delay()
+            await self._emit(ScrapeEventType.RATE_LIMIT_DELAY, f"Rate limit delay ({delay:.1f}s)", seconds=delay)
 
         return results
 
@@ -144,7 +148,8 @@ class GoogleMapsScraper(BaseScraper):
                 op_name=f"google_maps_extract:{query}",
                 page=page,
             )
-        except ScraperError:
+        except ScraperError as exc:
+            await self._emit(ScrapeEventType.WARNING, f"Failed to extract a listing: {exc}")
             return None
 
     async def _extract_listing(
@@ -187,6 +192,7 @@ class GoogleMapsScraper(BaseScraper):
         name = await self._text_or_none(page.locator("h1").last)
         if not name:
             raise ScraperError("Listing has no name — skipping")
+        await self._emit(ScrapeEventType.BUSINESS_PROCESSING, f'Scraping business "{name}"', business_name=name)
 
         website = await self._attr_or_none(page.locator('a[data-item-id="authority"]').first, "href")
         address = await self._text_or_none(page.locator('button[data-item-id="address"]').first)

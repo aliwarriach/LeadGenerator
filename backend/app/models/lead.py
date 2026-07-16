@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, Float, String, func
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,6 +13,14 @@ class LeadSource(StrEnum):
     GOOGLE_MAPS = "google_maps"
     FACEBOOK = "facebook"
     SERPER = "serper"
+
+
+class PipelineStage(StrEnum):
+    NEW_LEAD = "new_lead"
+    CONTACTED = "contacted"
+    QUALIFIED = "qualified"
+    PROPOSAL = "proposal"
+    WON = "won"
 
 
 class Lead(Base):
@@ -32,6 +40,16 @@ class Lead(Base):
     rating: Mapped[float | None] = mapped_column(Float)
     category: Mapped[str | None] = mapped_column(String(256))
 
+    # CRM fields — manually set via PATCH /leads/{id}, never touched by the
+    # discovery/enrichment pipeline (re-scraping an existing lead must not
+    # reset sales progress). estimated_revenue_level has no automatic source
+    # (nothing in the pipeline can derive it reliably) so it stays null until
+    # a user sets it.
+    estimated_revenue_level: Mapped[str | None] = mapped_column(String(64))
+    pipeline_stage: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=PipelineStage.NEW_LEAD, server_default=PipelineStage.NEW_LEAD
+    )
+
     query: Mapped[str | None] = mapped_column(String(512))
     search_location: Mapped[str | None] = mapped_column(String(512))
 
@@ -46,11 +64,29 @@ class Lead(Base):
     # itself. NOT the overall client rating (separate mechanic, built later).
     website_score: Mapped[float | None] = mapped_column(Float)
     website_score_details: Mapped[dict | None] = mapped_column(JSONB)
+
+    # PageSpeed performance/SEO broken out as their own fields (also present,
+    # bundled with best_practices, inside website_score_details) since these
+    # two are commonly filtered/sorted on independently of the combined score.
+    pagespeed_score: Mapped[float | None] = mapped_column(Float)
+    seo_score: Mapped[float | None] = mapped_column(Float)
+    performance_issues: Mapped[list[str] | None] = mapped_column(ARRAY(String(512)))
+
     emails: Mapped[list[str] | None] = mapped_column(ARRAY(String(320)))
     tech_stack: Mapped[list[str] | None] = mapped_column(ARRAY(String(128)))
     is_registered: Mapped[bool | None] = mapped_column(Boolean)
     logo_valid: Mapped[bool | None] = mapped_column(Boolean)
     enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # AI website audit (Groq) — on-demand only, via POST /leads/{id}/audit, not
+    # part of the automatic enrich_lead() pipeline. All null until requested.
+    ai_ui_score: Mapped[int | None] = mapped_column(Integer)
+    ai_conversion_score: Mapped[int | None] = mapped_column(Integer)
+    ai_content_score: Mapped[int | None] = mapped_column(Integer)
+    ai_trust_score: Mapped[int | None] = mapped_column(Integer)
+    ai_issues: Mapped[list[str] | None] = mapped_column(ARRAY(String(512)))
+    ai_summary: Mapped[str | None] = mapped_column(String(4096))
+    ai_audited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     raw_data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 

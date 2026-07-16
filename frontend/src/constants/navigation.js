@@ -1,4 +1,4 @@
-import { LayoutDashboard, Search, Building2, Kanban, ShieldCheck, Sparkles } from 'lucide-react'
+import { LayoutDashboard, Search, Building2, Kanban, ShieldCheck, Sparkles, History, ListTodo } from 'lucide-react'
 
 export const NAV_SECTIONS = [
   {
@@ -8,6 +8,13 @@ export const NAV_SECTIONS = [
       { id: 'discovery', label: 'Discovery', icon: Search },
       { id: 'businesses', label: 'Businesses', icon: Building2 },
       { id: 'pipeline', label: 'Pipeline', icon: Kanban },
+    ],
+  },
+  {
+    label: 'Discovery Ops',
+    items: [
+      { id: 'run-history', label: 'Run History', icon: History },
+      { id: 'job-queue', label: 'Job Queue', icon: ListTodo },
     ],
   },
   {

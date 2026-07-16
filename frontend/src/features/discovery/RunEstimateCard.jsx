@@ -1,18 +1,18 @@
 import { useMemo } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import Card from '../../components/ui/Card'
 import Button from '../../components/ui/Button'
 import RadarScan from './RadarScan'
 import { RUN_ESTIMATE } from '../../constants/discovery'
 import { useToastStore } from '../../store/useToastStore'
 import { useViewStore } from '../../store/useViewStore'
+import { useActiveRunStore } from '../../store/useActiveRunStore'
 import { useDiscovery } from '../../hooks/useDiscovery'
 import { buildDiscoveryPayload } from './buildDiscoveryPayload'
 
 export default function RunEstimateCard({ countryId, cityIds, customCity, industryIds, niche, filterIds }) {
   const show = useToastStore((s) => s.show)
   const setView = useViewStore((s) => s.setView)
-  const queryClient = useQueryClient()
+  const setActiveRunId = useActiveRunStore((s) => s.setActiveRunId)
   const { runDiscovery, running } = useDiscovery()
 
   const { payload, errors } = useMemo(
@@ -27,14 +27,11 @@ export default function RunEstimateCard({ countryId, cityIds, customCity, indust
     }
 
     try {
-      const { total, succeeded } = await runDiscovery(payload)
-      await queryClient.invalidateQueries({ queryKey: ['leads'] })
-      show(
-        succeeded === total
-          ? `**Discovery complete** — ${succeeded}/${total} sources finished`
-          : `**Discovery partially complete** — ${succeeded}/${total} sources finished`
-      )
-      setView('businesses')
+      const result = await runDiscovery(payload)
+      const jobCount = result.jobs.length
+      setActiveRunId(result.run_id)
+      show(`**Discovery started** — tracking ${jobCount} job${jobCount === 1 ? '' : 's'}`)
+      setView('run-monitoring', 'Discovery', { runId: result.run_id })
     } catch (err) {
       show(`**Discovery failed** — ${err.message}`)
     }

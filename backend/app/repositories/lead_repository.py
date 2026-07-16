@@ -1,10 +1,11 @@
 import uuid
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.lead import Lead
+from app.schemas.website_audit import WebsiteAuditResult
 
 _SORT_COLUMNS = {
     "created_at": Lead.created_at,
@@ -36,6 +37,9 @@ async def upsert_lead(session: AsyncSession, lead_data: dict) -> Lead:
                 "category": lead_data.get("category"),
                 "website_score": lead_data.get("website_score"),
                 "website_score_details": lead_data.get("website_score_details"),
+                "pagespeed_score": lead_data.get("pagespeed_score"),
+                "seo_score": lead_data.get("seo_score"),
+                "performance_issues": lead_data.get("performance_issues"),
                 "emails": lead_data.get("emails"),
                 "tech_stack": lead_data.get("tech_stack"),
                 "is_registered": lead_data.get("is_registered"),
@@ -76,6 +80,62 @@ async def count_by_query(session: AsyncSession, query: str, search_location: str
 async def get_by_id(session: AsyncSession, lead_id: uuid.UUID) -> Lead | None:
     result = await session.execute(select(Lead).where(Lead.id == lead_id))
     return result.scalar_one_or_none()
+
+
+async def update_ai_audit(session: AsyncSession, lead_id: uuid.UUID, audit: WebsiteAuditResult) -> Lead | None:
+    result = await session.execute(
+        update(Lead)
+        .where(Lead.id == lead_id)
+        .values(
+            ai_ui_score=audit.ui_score,
+            ai_conversion_score=audit.conversion_score,
+            ai_content_score=audit.content_score,
+            ai_trust_score=audit.trust_score,
+            ai_issues=audit.issues,
+            ai_summary=audit.summary,
+            ai_audited_at=func.now(),
+        )
+        .returning(Lead)
+    )
+    await session.commit()
+    return result.scalar_one_or_none()
+
+
+async def update_lead_pipeline(
+    session: AsyncSession,
+    lead_id: uuid.UUID,
+    *,
+    pipeline_stage: str | None,
+    estimated_revenue_level: str | None,
+) -> Lead | None:
+    """Patches only the CRM fields a user sets manually. Both params are
+    optional independently — only the ones actually passed are updated, so
+    a partial patch never clobbers the other field back to null."""
+    values: dict = {}
+    if pipeline_stage is not None:
+        values["pipeline_stage"] = pipeline_stage
+    if estimated_revenue_level is not None:
+        values["estimated_revenue_level"] = estimated_revenue_level
+
+    if not values:
+        return await get_by_id(session, lead_id)
+
+    values["updated_at"] = func.now()
+    result = await session.execute(update(Lead).where(Lead.id == lead_id).values(**values).returning(Lead))
+    await session.commit()
+    return result.scalar_one_or_none()
+
+
+async def count_by_source(session: AsyncSession, sources: list[str]) -> dict[str, int]:
+    """Total lead count per source, across all runs — a single GROUP BY query
+    rather than one COUNT(*) per source, so callers rendering several jobs at
+    once (or a job list) don't trigger N separate queries."""
+    if not sources:
+        return {}
+    result = await session.execute(
+        select(Lead.source, func.count()).where(Lead.source.in_(sources)).group_by(Lead.source)
+    )
+    return dict(result.all())
 
 
 def _apply_lead_filters(

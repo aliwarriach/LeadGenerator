@@ -17,6 +17,12 @@ class Settings(BaseSettings):
 
     # Queue (ARQ / Redis)
     redis_url: str = "redis://127.0.0.1:6379/0"
+    # Spawns `python -m arq app.workers.queue.WorkerSettings` as a child
+    # process of the API on startup, so a single `uvicorn app.main:app` run
+    # is enough for local dev. Set False if the worker is run/scaled as its
+    # own deployment (e.g. production, or multiple uvicorn workers sharing
+    # one queue) — each API process would otherwise spawn its own worker.
+    auto_start_arq_worker: bool = True
 
     # CORS — origins allowed to call this API from a browser (the frontend's
     # dev server). Vite's default port is 5173; both localhost and 127.0.0.1
@@ -38,6 +44,11 @@ class Settings(BaseSettings):
     scraper_search_delay_max: float = 9.0
     scraper_navigation_timeout_ms: int = 30_000
     scraper_screenshot_dir: str = "screenshots"
+    # On-disk Chromium profile dir (cookies/local storage persist across
+    # runs, one subfolder per source) — a free, zero-IP-rotation mitigation
+    # for "looks like a fresh bot every single run." Not a substitute for a
+    # real proxy pool; see ScraperConfig.profile_dir / _launch_persistent_context.
+    scraper_profile_dir: str = "browser_profiles"
 
     # Locale / geo fingerprint
     scraper_locale: str = "en-US"
@@ -97,9 +108,44 @@ class Settings(BaseSettings):
     opencorporates_base_url: str = "https://api.opencorporates.com/v0.4/companies/search"
     opencorporates_timeout_seconds: float = 10.0
 
-    # Enrichment: Clearbit Logo — keyless quick domain validation
+    # Enrichment: Clearbit Logo — keyless quick domain validation.
+    # Disabled by default: logo.clearbit.com no longer resolves (confirmed via
+    # direct DNS lookup — NXDOMAIN, not a per-domain failure), so every call
+    # was failing identically and just adding a DNS-timeout round trip plus
+    # log noise per lead. Re-enable if Clearbit restores the host, or point
+    # clearbit_logo_base_url at a replacement service.
+    clearbit_logo_enabled: bool = False
     clearbit_logo_base_url: str = "https://logo.clearbit.com"
     clearbit_timeout_seconds: float = 8.0
+
+    # AI website audit (Groq) — on-demand only (POST /leads/{id}/audit), not
+    # part of the automatic per-lead enrichment pipeline: an LLM call per
+    # lead is real cost/latency that shouldn't be spent on every scraped
+    # lead regardless of whether anyone ever looks at it. Groq's OpenAI-
+    # compatible chat completions endpoint, called directly via httpx rather
+    # than pulling in their SDK for one endpoint.
+    groq_api_key: str | None = None
+    groq_base_url: str = "https://api.groq.com/openai/v1/chat/completions"
+    # Verify this against Groq's current model list before relying on it —
+    # available models change over time; override via .env if it's retired.
+    groq_model: str = "llama-3.3-70b-versatile"
+    groq_timeout_seconds: float = 30.0
+    # Retries here are for malformed/unparseable JSON output specifically
+    # (an LLM occasionally returns non-conforming JSON despite json_object
+    # mode), not general network flakiness — one retry is enough to smooth
+    # over that without masking a genuinely broken prompt/response.
+    groq_max_retries: int = 2
+    # Body/heading text sent to the model is truncated to this many
+    # characters to keep the prompt small and bounded regardless of how
+    # large the target page is.
+    website_content_max_chars: int = 3000
+    website_content_fetch_timeout_seconds: float = 10.0
+
+    # AI sales chatbot (Groq) — POST/GET /leads/{id}/chat. Full conversation
+    # history is persisted forever, but only the most recent N messages are
+    # replayed as context on each request — keeps prompt size bounded for
+    # Groq's free-tier rate limits regardless of how long a conversation gets.
+    chat_history_max_messages: int = 12
 
     # Normalization / deduplication
     default_phone_region: str = "PK"
