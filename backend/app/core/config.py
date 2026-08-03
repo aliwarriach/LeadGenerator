@@ -25,11 +25,16 @@ class Settings(BaseSettings):
     auto_start_arq_worker: bool = True
 
     # CORS — origins allowed to call this API from a browser (the frontend's
-    # dev server). Vite's default port is 5173; both localhost and 127.0.0.1
-    # are listed since browsers treat them as distinct origins.
+    # dev server). Vite's default port is 5173, but it falls forward to 5174+
+    # if 5173 is already taken by another process; both localhost and
+    # 127.0.0.1 are listed since browsers treat them as distinct origins.
     cors_allowed_origins: list[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
     ]
 
     # Scraper behavior

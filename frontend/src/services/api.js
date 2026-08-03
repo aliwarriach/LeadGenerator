@@ -1,7 +1,7 @@
 import { create } from 'apisauce'
 
 export const api = create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:7000',
 })
 
 // Shared error envelope: { error: { code, message, retryable, retry_after_seconds, details } }.
