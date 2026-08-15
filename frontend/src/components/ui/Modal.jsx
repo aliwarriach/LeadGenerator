@@ -1,6 +1,16 @@
+import { useEffect } from 'react'
 import { X } from 'lucide-react'
 
 export default function Modal({ open, onClose, title, children }) {
+  useEffect(() => {
+    if (!open) return
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [open, onClose])
+
   if (!open) return null
 
   return (

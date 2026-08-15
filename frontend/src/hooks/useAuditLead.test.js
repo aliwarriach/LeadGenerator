@@ -56,6 +56,23 @@ describe('useAuditLead', () => {
     expect(cached.items[0].ai_audited_at).not.toBeNull()
   })
 
+  it('updates the singular lead query cache so a screen reading useLead(id) sees the fresh audit', async () => {
+    runAudit.mockResolvedValue({ ok: true, data: AUDIT_RESPONSE })
+    const { Wrapper, queryClient } = createQueryWrapper()
+    queryClient.setQueryData(['lead', 'lead-1'], { id: 'lead-1', name: 'Acme', has_website: true, ai_audited_at: null })
+    const { result } = renderHook(() => useAuditLead(), { wrapper: Wrapper })
+
+    act(() => {
+      result.current.mutate('lead-1')
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    const cachedLead = queryClient.getQueryData(['lead', 'lead-1'])
+    expect(cachedLead.ai_ui_score).toBe(6)
+    expect(cachedLead.ai_summary).toBe('Overall evaluation text.')
+    expect(cachedLead.ai_audited_at).not.toBeNull()
+  })
+
   it('surfaces a 404 not-found message', async () => {
     runAudit.mockResolvedValue({ ok: false, data: { detail: 'Lead not found' } })
     const { Wrapper } = createQueryWrapper()

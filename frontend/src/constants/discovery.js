@@ -66,10 +66,12 @@ export const DEFAULT_SELECTION = {
   filters: ['rating4'],
 }
 
-export const RUN_ESTIMATE = {
-  subQueries: 14,
-  expectedRange: '~380–460',
-  cachedPct: '~31% free',
-  costRange: '$8.40 – $10.90',
-  note: 'Text Search returns max 60 results per query, so this run fans out across 14 neighborhood sub-queries and dedups on place ID. Cached places (<30 days) cost nothing.',
-}
+// Sources fanned into for every city in a run — a fixed fact about how
+// discovery works, independent of the current filter selection. Ids match
+// the backend's DiscoverySourceLiteral values so real per-source stats
+// (RunEstimateCard) can be joined onto these labels directly.
+export const DISCOVERY_SOURCES = [
+  { id: 'google_maps', label: 'Google Maps' },
+  { id: 'facebook', label: 'Facebook' },
+  { id: 'serper', label: 'Serper' },
+]

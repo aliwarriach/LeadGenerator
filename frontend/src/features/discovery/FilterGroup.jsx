@@ -1,4 +1,4 @@
-export default function FilterGroup({ label, options, selected, onToggle, getLabel = (o) => o.label, getId = (o) => o.id }) {
+export default function FilterGroup({ label, options, selected, onToggle, error, getLabel = (o) => o.label, getId = (o) => o.id }) {
   return (
     <div className="px-[22px] pb-[18px]">
       <label className="mb-2 block text-[11.5px] font-semibold uppercase tracking-wider text-txt-dim">{label}</label>
@@ -12,7 +12,7 @@ export default function FilterGroup({ label, options, selected, onToggle, getLab
               type="button"
               onClick={() => onToggle(id)}
               aria-pressed={on}
-              className={`rounded-full border px-[13px] py-1.5 text-[12.5px] transition-colors duration-150 ${
+              className={`rounded-full border px-[13px] py-1.5 text-[12.5px] transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-signal ${
                 on
                   ? 'border-signal bg-signal-dim font-semibold text-signal'
                   : 'border-line-hi text-txt-dim hover:border-txt-mute hover:text-txt'
@@ -23,6 +23,11 @@ export default function FilterGroup({ label, options, selected, onToggle, getLab
           )
         })}
       </div>
+      {error && (
+        <p className="mt-1.5 text-[11.5px] text-red" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   )
 }

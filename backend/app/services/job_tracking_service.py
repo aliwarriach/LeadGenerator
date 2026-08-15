@@ -1,6 +1,7 @@
 import logging
 import math
 import uuid
+from collections import defaultdict
 from collections.abc import Iterable
 from datetime import datetime, timezone
 
@@ -16,8 +17,10 @@ from app.schemas.discovery_job import (
     DiscoveryJobResponse,
     DiscoveryRunListResponse,
     DiscoveryRunResponse,
+    DiscoveryRunStatsResponse,
     DiscoveryRunSummary,
     DiscoveryRunWarning,
+    SourcePerformance,
 )
 from app.schemas.errors import ErrorDetail
 
@@ -27,6 +30,11 @@ logger = logging.getLogger(__name__)
 # signal (e.g. 1 failure out of 1 attempt is not "high failure rate").
 _MIN_ATTEMPTS_FOR_FAILURE_WARNING = 5
 _HIGH_FAILURE_RATE_THRESHOLD = 0.4
+
+# How many of the most recent runs the "run estimate" stats card (frontend
+# Discovery screen) aggregates over — bounds the query cost as run history
+# grows; recent runs are also the most representative of current conditions.
+_RECENT_RUNS_LIMIT_FOR_STATS = 200
 
 _TERMINAL_SEVERITY = {
     DiscoveryJobStatus.FAILED: 5,
@@ -180,6 +188,63 @@ async def list_runs(session: AsyncSession, *, page: int, page_size: int) -> Disc
 
     total_pages = math.ceil(total / page_size) if total else 0
     return DiscoveryRunListResponse(items=summaries, total=total, page=page, page_size=page_size, total_pages=total_pages)
+
+
+_NON_TERMINAL_RUN_STATUSES = frozenset({DiscoveryJobStatus.PENDING, DiscoveryJobStatus.RUNNING})
+
+
+async def get_run_stats(session: AsyncSession) -> DiscoveryRunStatsResponse:
+    """Duration/leads/source figures average over fully-completed runs only,
+    among the most recent _RECENT_RUNS_LIMIT_FOR_STATS — stopped/failed/
+    blocked runs would skew a "typical run" figure. success_rate is measured
+    across all terminal runs instead, since it exists specifically to surface
+    those excluded outcomes."""
+    jobs = await discovery_job_repository.list_jobs_for_recent_runs(session, run_limit=_RECENT_RUNS_LIMIT_FOR_STATS)
+
+    jobs_by_run: dict[uuid.UUID, list[DiscoveryJob]] = defaultdict(list)
+    for job in jobs:
+        jobs_by_run[job.run_id].append(job)
+
+    durations_seconds: list[float] = []
+    leads_saved_per_run: list[int] = []
+    leads_saved_by_source: dict[str, list[int]] = defaultdict(list)
+    terminal_run_count = 0
+
+    for run_jobs in jobs_by_run.values():
+        status = derive_run_status(run_jobs)
+        if status in _NON_TERMINAL_RUN_STATUSES:
+            continue
+        terminal_run_count += 1
+        if status != DiscoveryJobStatus.COMPLETED:
+            continue
+
+        leads_saved_per_run.append(sum(job.leads_saved_session for job in run_jobs))
+        for job in run_jobs:
+            leads_saved_by_source[job.source].append(job.leads_saved_session)
+
+        started_at = _min_or_none(job.started_at for job in run_jobs)
+        finished_at = _max_or_none(job.finished_at for job in run_jobs)
+        if started_at is not None and finished_at is not None:
+            durations_seconds.append((finished_at - started_at).total_seconds())
+
+    completed_run_count = len(leads_saved_per_run)
+    leads_by_source = sorted(
+        (
+            SourcePerformance(source=source, avg_leads_saved=sum(values) / len(values))
+            for source, values in leads_saved_by_source.items()
+        ),
+        key=lambda item: item.avg_leads_saved,
+        reverse=True,
+    )
+
+    return DiscoveryRunStatsResponse(
+        completed_run_count=completed_run_count,
+        avg_duration_seconds=(sum(durations_seconds) / len(durations_seconds)) if durations_seconds else None,
+        avg_leads_saved=(sum(leads_saved_per_run) / len(leads_saved_per_run)) if leads_saved_per_run else None,
+        total_leads_saved=sum(leads_saved_per_run),
+        success_rate=(completed_run_count / terminal_run_count) if terminal_run_count else None,
+        leads_by_source=leads_by_source,
+    )
 
 
 async def get_job_detail(session: AsyncSession, job_id: uuid.UUID) -> DiscoveryJobResponse:

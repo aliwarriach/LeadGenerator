@@ -1,11 +1,23 @@
 import { Search } from 'lucide-react'
 import { NAV_SECTIONS, WORKSPACE_USER } from '../../constants/navigation'
 import { useViewStore } from '../../store/useViewStore'
+import { useSelectedLeadStore } from '../../store/useSelectedLeadStore'
 import ActiveRunBanner from './ActiveRunBanner'
+
+const LEAD_SCOPED_VIEWS = new Set(['audit', 'askai'])
 
 export default function Sidebar() {
   const view = useViewStore((s) => s.view)
   const setView = useViewStore((s) => s.setView)
+  const selectedLeadId = useSelectedLeadStore((s) => s.selectedLeadId)
+
+  function handleNavClick(viewId) {
+    if (LEAD_SCOPED_VIEWS.has(viewId) && selectedLeadId) {
+      setView(viewId, 'Workspace', { leadId: selectedLeadId })
+    } else {
+      setView(viewId)
+    }
+  }
 
   return (
     <aside className="sticky top-0 flex h-screen w-[228px] shrink-0 flex-col border-r border-line bg-ink-soft">
@@ -30,7 +42,7 @@ export default function Sidebar() {
               return (
                 <button
                   key={item.id}
-                  onClick={() => setView(item.id)}
+                  onClick={() => handleNavClick(item.id)}
                   aria-current={active ? 'page' : undefined}
                   className={`mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13.5px] font-medium transition-colors duration-150 ${
                     active ? 'bg-signal-dim text-signal' : 'text-txt-dim hover:bg-ink-card hover:text-txt'

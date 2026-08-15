@@ -93,6 +93,38 @@ async def test_list_runs_returns_items_when_present():
     assert body["items"][0]["status"] == "completed"
 
 
+async def test_get_run_stats_returns_200_and_is_not_shadowed_by_run_id_route():
+    _override_db_session(AsyncMock())
+    from app.schemas.discovery_job import DiscoveryRunStatsResponse, SourcePerformance
+
+    fake_stats = DiscoveryRunStatsResponse(
+        completed_run_count=3,
+        avg_duration_seconds=245.5,
+        avg_leads_saved=12.0,
+        total_leads_saved=36,
+        success_rate=0.75,
+        leads_by_source=[SourcePerformance(source="google_maps", avg_leads_saved=8.0)],
+    )
+
+    with patch("app.routes.discovery.job_tracking_service.get_run_stats", new=AsyncMock(return_value=fake_stats)):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/discovery-runs/stats")
+
+    # A regression here (e.g. /discovery-runs/stats registered after
+    # /discovery-runs/{run_id}) would 422 instead, since "stats" fails UUID
+    # parsing as a run_id path param.
+    assert response.status_code == 200
+    assert response.json() == {
+        "completed_run_count": 3,
+        "avg_duration_seconds": 245.5,
+        "avg_leads_saved": 12.0,
+        "total_leads_saved": 36,
+        "success_rate": 0.75,
+        "leads_by_source": [{"source": "google_maps", "avg_leads_saved": 8.0}],
+    }
+
+
 async def test_get_run_detail_returns_200_with_jobs_and_warnings():
     _override_db_session(AsyncMock())
     run_id = uuid.uuid4()

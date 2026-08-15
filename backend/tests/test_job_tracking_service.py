@@ -147,6 +147,135 @@ async def test_get_job_detail_includes_total_leads_scraped_by_source():
     assert response.total_leads_scraped_by_source == 57
 
 
+async def test_get_run_stats_excludes_non_completed_runs():
+    mock_session = AsyncMock()
+    completed_run_id = uuid.uuid4()
+    stopped_run_id = uuid.uuid4()
+    running_run_id = uuid.uuid4()
+
+    jobs = [
+        _job(
+            run_id=completed_run_id,
+            source="google_maps",
+            status=DiscoveryJobStatus.COMPLETED,
+            leads_saved_session=5,
+            started_at=datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 1, 1, 10, 2, tzinfo=timezone.utc),
+        ),
+        _job(
+            run_id=completed_run_id,
+            source="facebook",
+            status=DiscoveryJobStatus.COMPLETED,
+            leads_saved_session=3,
+            started_at=datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 1, 1, 10, 4, tzinfo=timezone.utc),
+        ),
+        _job(run_id=stopped_run_id, status=DiscoveryJobStatus.STOPPED, leads_saved_session=99),
+        _job(run_id=running_run_id, status=DiscoveryJobStatus.RUNNING, leads_saved_session=99),
+    ]
+
+    with patch(
+        "app.services.job_tracking_service.discovery_job_repository.list_jobs_for_recent_runs",
+        new=AsyncMock(return_value=jobs),
+    ):
+        result = await job_tracking_service.get_run_stats(mock_session)
+
+    assert result.completed_run_count == 1
+    assert result.avg_leads_saved == 8  # 5 + 3 from the one completed run
+    assert result.avg_duration_seconds == 240  # max(finished_at) - min(started_at) = 4 minutes
+    assert result.total_leads_saved == 8
+    # 1 completed out of 2 terminal runs (stopped run counts, running one doesn't)
+    assert result.success_rate == 0.5
+    assert {(s.source, s.avg_leads_saved) for s in result.leads_by_source} == {
+        ("google_maps", 5.0),
+        ("facebook", 3.0),
+    }
+
+
+async def test_get_run_stats_returns_none_averages_when_no_completed_runs():
+    mock_session = AsyncMock()
+    jobs = [_job(status=DiscoveryJobStatus.STOPPED), _job(status=DiscoveryJobStatus.FAILED)]
+
+    with patch(
+        "app.services.job_tracking_service.discovery_job_repository.list_jobs_for_recent_runs",
+        new=AsyncMock(return_value=jobs),
+    ):
+        result = await job_tracking_service.get_run_stats(mock_session)
+
+    assert result.completed_run_count == 0
+    assert result.avg_duration_seconds is None
+    assert result.avg_leads_saved is None
+    assert result.total_leads_saved == 0
+    assert result.success_rate == 0.0  # 0 completed out of 2 terminal (stopped + failed) runs
+    assert result.leads_by_source == []
+
+
+async def test_get_run_stats_success_rate_is_none_when_no_terminal_runs_yet():
+    mock_session = AsyncMock()
+    jobs = [_job(status=DiscoveryJobStatus.PENDING), _job(status=DiscoveryJobStatus.RUNNING)]
+
+    with patch(
+        "app.services.job_tracking_service.discovery_job_repository.list_jobs_for_recent_runs",
+        new=AsyncMock(return_value=jobs),
+    ):
+        result = await job_tracking_service.get_run_stats(mock_session)
+
+    assert result.success_rate is None
+
+
+async def test_get_run_stats_ranks_leads_by_source_best_first():
+    mock_session = AsyncMock()
+    run_id = uuid.uuid4()
+
+    jobs = [
+        _job(run_id=run_id, source="google_maps", status=DiscoveryJobStatus.COMPLETED, leads_saved_session=20),
+        _job(run_id=run_id, source="serper", status=DiscoveryJobStatus.COMPLETED, leads_saved_session=2),
+        _job(run_id=run_id, source="facebook", status=DiscoveryJobStatus.COMPLETED, leads_saved_session=8),
+    ]
+
+    with patch(
+        "app.services.job_tracking_service.discovery_job_repository.list_jobs_for_recent_runs",
+        new=AsyncMock(return_value=jobs),
+    ):
+        result = await job_tracking_service.get_run_stats(mock_session)
+
+    assert [s.source for s in result.leads_by_source] == ["google_maps", "facebook", "serper"]
+
+
+async def test_get_run_stats_averages_across_multiple_completed_runs():
+    mock_session = AsyncMock()
+    run_a, run_b = uuid.uuid4(), uuid.uuid4()
+
+    jobs = [
+        _job(
+            run_id=run_a,
+            status=DiscoveryJobStatus.COMPLETED,
+            leads_saved_session=10,
+            started_at=datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 1, 1, 10, 1, tzinfo=timezone.utc),
+        ),
+        _job(
+            run_id=run_b,
+            status=DiscoveryJobStatus.COMPLETED,
+            leads_saved_session=20,
+            started_at=datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 1, 1, 10, 3, tzinfo=timezone.utc),
+        ),
+    ]
+
+    with patch(
+        "app.services.job_tracking_service.discovery_job_repository.list_jobs_for_recent_runs",
+        new=AsyncMock(return_value=jobs),
+    ):
+        result = await job_tracking_service.get_run_stats(mock_session)
+
+    assert result.completed_run_count == 2
+    assert result.avg_leads_saved == 15  # (10 + 20) / 2
+    assert result.avg_duration_seconds == 120  # (60 + 180) / 2
+    assert result.total_leads_saved == 30
+    assert result.success_rate == 1.0
+
+
 async def test_request_stop_raises_not_found_when_missing():
     mock_session = AsyncMock()
     with patch(

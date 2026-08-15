@@ -2,6 +2,7 @@ import { formatDistanceToNow, parseISO } from 'date-fns'
 import Card from '../../components/ui/Card'
 import Button from '../../components/ui/Button'
 import { useRecentActivity } from '../../hooks/useDashboard'
+import { useViewStore } from '../../store/useViewStore'
 import { ACTIVITY_TYPE_META } from '../../constants/overview'
 import { renderRichText } from '../../utils/richText'
 
@@ -19,7 +20,16 @@ function describeActivity(activity) {
 }
 
 export default function ActivityFeed() {
+  const setView = useViewStore((s) => s.setView)
   const { data, isLoading, isError, error, refetch } = useRecentActivity(10)
+
+  // Every activity type reads/writes through the same lead-scoped panel
+  // (chat + outreach), so one consistent destination beats branching per
+  // type — Ask AI works for every lead regardless of website presence,
+  // unlike Audit which has no useful content for website-less leads.
+  function openActivity(activity) {
+    setView('askai', `Overview / ${activity.lead_name}`, { leadId: activity.lead_id })
+  }
 
   return (
     <Card>
@@ -48,7 +58,13 @@ export default function ActivityFeed() {
             const meta = ACTIVITY_TYPE_META[a.type] ?? ACTIVITY_TYPE_META.stage_change
             const Icon = meta.icon
             return (
-              <div key={a.id} className="flex items-start gap-3 border-b border-line py-2.5 text-[12.5px] last:border-none">
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => openActivity(a)}
+                title={`Open ${a.lead_name} in Ask AI`}
+                className="flex w-full items-start gap-3 border-b border-line py-2.5 text-left text-[12.5px] transition-colors duration-100 last:border-none hover:bg-signal/[.03]"
+              >
                 <div className={`grid h-[26px] w-[26px] shrink-0 place-items-center rounded-lg ${TONE_BG[meta.tone]}`}>
                   <Icon className="h-3.5 w-3.5" strokeWidth={2} />
                 </div>
@@ -56,7 +72,7 @@ export default function ActivityFeed() {
                 <div className="ml-auto whitespace-nowrap text-[11px] text-txt-mute">
                   {formatDistanceToNow(parseISO(a.created_at), { addSuffix: true })}
                 </div>
-              </div>
+              </button>
             )
           })
         )}

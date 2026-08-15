@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Search } from 'lucide-react'
 import Card from '../../components/ui/Card'
 import Button from '../../components/ui/Button'
 import { OUTREACH_TYPES, OUTREACH_TONES } from '../../constants/askai'
@@ -6,8 +7,7 @@ import { useViewStore } from '../../store/useViewStore'
 import { useToastStore } from '../../store/useToastStore'
 import { useGenerateOutreach } from '../../hooks/useGenerateOutreach'
 
-export default function OutreachPanel() {
-  const params = useViewStore((s) => s.params)
+export default function OutreachPanel({ leadId, onOpenPicker }) {
   const breadcrumb = useViewStore((s) => s.breadcrumb)
   const setView = useViewStore((s) => s.setView)
   const show = useToastStore((s) => s.show)
@@ -15,7 +15,6 @@ export default function OutreachPanel() {
 
   const [type, setType] = useState('email')
   const [tone, setTone] = useState('default')
-  const { leadId } = params
 
   function handleGenerate() {
     generateMutation.mutate(
@@ -76,7 +75,14 @@ export default function OutreachPanel() {
       <Button onClick={handleGenerate} disabled={!leadId || generateMutation.isPending} className="w-full justify-center">
         {generateMutation.isPending ? 'Generating…' : 'Generate'}
       </Button>
-      {!leadId && <p className="mt-2 text-[11px] text-red">No lead selected — open this from a business row.</p>}
+      {!leadId && (
+        <div className="mt-2.5 text-center">
+          <p className="mb-1.5 text-[11px] text-txt-mute">No business selected yet.</p>
+          <Button variant="ghost" onClick={onOpenPicker} className="w-full justify-center text-[11.5px]">
+            <Search className="h-3 w-3" /> Choose a business
+          </Button>
+        </div>
+      )}
     </Card>
   )
 }

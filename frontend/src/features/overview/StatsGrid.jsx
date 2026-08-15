@@ -1,8 +1,12 @@
 import Card from '../../components/ui/Card'
 import Button from '../../components/ui/Button'
 import { useDashboardStats } from '../../hooks/useDashboard'
+import { useViewStore } from '../../store/useViewStore'
 
-function statCards(stats) {
+// Only stats with a real, already-existing destination screen are made
+// clickable. "Audits completed" has no matching Businesses filter today, so
+// it stays a plain display value rather than linking somewhere dishonest.
+function statCards(stats, setView) {
   return [
     {
       key: 'discovered',
@@ -10,6 +14,7 @@ function statCards(stats) {
       value: stats.discovered_total.toLocaleString(),
       delta: `▲ ${stats.discovered_this_week.toLocaleString()} this week`,
       deltaTone: 'signal',
+      onClick: () => setView('businesses', 'Overview'),
     },
     {
       key: 'hot',
@@ -18,6 +23,7 @@ function statCards(stats) {
       valueTone: 'amber',
       delta: `${stats.no_website_pct}% of total`,
       deltaTone: 'muted',
+      onClick: () => setView('businesses', 'Overview'),
     },
     {
       key: 'audits',
@@ -32,6 +38,7 @@ function statCards(stats) {
       value: stats.active_deals.toLocaleString(),
       delta: 'Contacted, qualified & proposal stages',
       deltaTone: 'muted',
+      onClick: () => setView('pipeline', 'Overview'),
     },
   ]
 }
@@ -54,6 +61,7 @@ function SkeletonGrid() {
 }
 
 export default function StatsGrid() {
+  const setView = useViewStore((s) => s.setView)
   const { data, isLoading, isError, error, refetch } = useDashboardStats()
 
   if (isLoading) return <SkeletonGrid />
@@ -71,15 +79,32 @@ export default function StatsGrid() {
 
   return (
     <div className="mb-[22px] grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-      {statCards(data).map((s) => (
-        <Card key={s.key} className="px-5 py-[18px]">
-          <div className="text-[11.5px] font-medium text-txt-mute">{s.label}</div>
-          <div className={`mt-1.5 font-display text-[28px] font-bold tracking-tight ${VALUE_TONE[s.valueTone] ?? 'text-white'}`}>
-            {s.value}
-          </div>
-          <div className={`mt-1 text-[11.5px] ${DELTA_TONE[s.deltaTone] ?? 'text-txt-mute'}`}>{s.delta}</div>
-        </Card>
-      ))}
+      {statCards(data, setView).map((s) => {
+        const content = (
+          <>
+            <div className="text-[11.5px] font-medium text-txt-mute">{s.label}</div>
+            <div className={`mt-1.5 font-display text-[28px] font-bold tracking-tight ${VALUE_TONE[s.valueTone] ?? 'text-white'}`}>
+              {s.value}
+            </div>
+            <div className={`mt-1 text-[11.5px] ${DELTA_TONE[s.deltaTone] ?? 'text-txt-mute'}`}>{s.delta}</div>
+          </>
+        )
+        return s.onClick ? (
+          <Card key={s.key} className="p-0">
+            <button
+              type="button"
+              onClick={s.onClick}
+              className="w-full rounded-2xl px-5 py-[18px] text-left transition-colors duration-150 hover:bg-signal/[.03]"
+            >
+              {content}
+            </button>
+          </Card>
+        ) : (
+          <Card key={s.key} className="px-5 py-[18px]">
+            {content}
+          </Card>
+        )
+      })}
     </div>
   )
 }

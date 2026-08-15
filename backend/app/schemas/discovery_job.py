@@ -87,6 +87,30 @@ class DiscoveryRunListResponse(BaseModel):
     total_pages: int
 
 
+class SourcePerformance(BaseModel):
+    source: DiscoverySourceLiteral
+    avg_leads_saved: float
+
+
+class DiscoveryRunStatsResponse(BaseModel):
+    """Duration/leads figures are aggregated over fully-completed runs only
+    (see derive_run_status) — stopped/failed/blocked runs would skew a
+    "typical run" figure, so they're excluded rather than averaged in.
+    success_rate is the one exception: it's defined precisely to measure
+    those excluded outcomes, so it counts every terminal run instead."""
+
+    completed_run_count: int
+    avg_duration_seconds: float | None
+    avg_leads_saved: float | None
+    total_leads_saved: int
+    # completed / (completed + failed + blocked + stopped + skipped_cooldown)
+    # among terminal runs; None if no run has reached a terminal state yet.
+    success_rate: float | None
+    # Per-source average leads saved per job, across completed runs, ranked
+    # best-first. Empty until at least one completed run exists.
+    leads_by_source: list[SourcePerformance]
+
+
 class DiscoveryJobEventResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

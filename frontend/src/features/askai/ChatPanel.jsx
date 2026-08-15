@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Sparkles, Send } from 'lucide-react'
+import { Sparkles, Send, Search } from 'lucide-react'
 import Card from '../../components/ui/Card'
 import Button from '../../components/ui/Button'
 import ChatMessage from './ChatMessage'
@@ -12,7 +12,7 @@ function toBlocks(content) {
   return [{ type: 'p', text: content }]
 }
 
-export default function ChatPanel({ leadId }) {
+export default function ChatPanel({ leadId, onOpenPicker }) {
   const [input, setInput] = useState('')
   const bodyRef = useRef(null)
   const leadQuery = useLead(leadId)
@@ -34,8 +34,11 @@ export default function ChatPanel({ leadId }) {
 
   if (!leadId) {
     return (
-      <Card className="grid h-[600px] place-items-center px-5 text-center text-[13px] text-txt-mute">
-        No lead selected — open Ask AI from a business row to start a conversation.
+      <Card className="flex h-[600px] flex-col items-center justify-center gap-3 px-5 text-center">
+        <p className="text-[13px] text-txt-mute">No business selected yet — pick one to start a conversation.</p>
+        <Button onClick={onOpenPicker}>
+          <Search className="h-3.5 w-3.5" /> Choose a business
+        </Button>
       </Card>
     )
   }

@@ -60,6 +60,15 @@ async def list_jobs_for_run(session: AsyncSession, run_id: uuid.UUID) -> list[Di
     return list(result.scalars().all())
 
 
+async def list_jobs_for_recent_runs(session: AsyncSession, *, run_limit: int) -> list[DiscoveryJob]:
+    """All jobs belonging to the most recent `run_limit` runs, in one query —
+    bounds the run-stats aggregation to a fixed cost instead of scanning full
+    history as the table grows."""
+    recent_run_ids = select(DiscoveryRun.id).order_by(DiscoveryRun.created_at.desc()).limit(run_limit)
+    result = await session.execute(select(DiscoveryJob).where(DiscoveryJob.run_id.in_(recent_run_ids)))
+    return list(result.scalars().all())
+
+
 async def get_job(session: AsyncSession, job_id: uuid.UUID) -> DiscoveryJob | None:
     result = await session.execute(select(DiscoveryJob).where(DiscoveryJob.id == job_id))
     return result.scalar_one_or_none()

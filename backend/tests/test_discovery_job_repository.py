@@ -92,6 +92,33 @@ async def test_update_job_status_includes_error_fields_when_error_given():
     assert compiled_params["error_retry_after_seconds"] == 1800
 
 
+async def test_list_jobs_for_recent_runs_returns_scalars():
+    mock_session = AsyncMock()
+    jobs = [MagicMock(spec=DiscoveryJob), MagicMock(spec=DiscoveryJob)]
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = jobs
+    mock_session.execute = AsyncMock(return_value=result)
+
+    returned = await discovery_job_repository.list_jobs_for_recent_runs(mock_session, run_limit=200)
+
+    mock_session.execute.assert_awaited_once()
+    assert returned == jobs
+
+
+async def test_list_jobs_for_recent_runs_scopes_by_recent_run_ids_subquery():
+    mock_session = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = []
+    mock_session.execute = AsyncMock(return_value=result)
+
+    await discovery_job_repository.list_jobs_for_recent_runs(mock_session, run_limit=50)
+
+    stmt = mock_session.execute.call_args.args[0]
+    compiled = str(stmt.compile(dialect=postgresql.dialect()))
+    assert "discovery_jobs.run_id IN" in compiled
+    assert "discovery_runs.created_at" in compiled
+
+
 async def test_set_stop_requested_returns_none_when_job_missing():
     mock_session = AsyncMock()
     result = MagicMock()

@@ -34,6 +34,10 @@ export function listDiscoveryRuns(params) {
   return api.get('/discovery-runs', params)
 }
 
+export function getDiscoveryRunStats() {
+  return api.get('/discovery-runs/stats')
+}
+
 export function listDiscoveryJobs(params) {
   return api.get('/discovery-jobs', params)
 }

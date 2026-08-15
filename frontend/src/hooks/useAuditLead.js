@@ -36,6 +36,14 @@ export function useAuditLead() {
         return { ...data, items: data.items.map((lead) => mergeAuditIntoLead(lead, audit)) }
       })
       queryClient.invalidateQueries({ queryKey: ['leads'] })
+
+      // The singular ['lead', id] query (AuditView, Ask AI) is a different
+      // cache key from the plural ['leads'] list queries above — TanStack's
+      // prefix matching does not treat one as a match for the other, so
+      // without this the screen showing this exact mutation's result never
+      // sees it update.
+      queryClient.setQueryData(['lead', audit.lead_id], (lead) => (lead ? mergeAuditIntoLead(lead, audit) : lead))
+      queryClient.invalidateQueries({ queryKey: ['lead', audit.lead_id] })
     },
   })
 }

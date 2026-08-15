@@ -8,6 +8,7 @@ import { useToastStore } from '../../store/useToastStore'
 import { useLeads } from '../../hooks/useLeads'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { mapLeadToBusiness } from './mapLeadToBusiness'
+import { businessesToCsv, downloadCsv } from '../../utils/csv'
 
 const PAGE_SIZE = 50
 
@@ -50,6 +51,11 @@ export default function BusinessesView() {
       ? 'Unable to load results'
       : `${data.total} result${data.total === 1 ? '' : 's'}${data.total > PAGE_SIZE ? ` · showing first ${PAGE_SIZE}` : ''}`
 
+  function handleExportCsv() {
+    downloadCsv(`businesses-${new Date().toISOString().slice(0, 10)}.csv`, businessesToCsv(businesses))
+    show(`**CSV exported** — ${businesses.length} business${businesses.length === 1 ? '' : 'es'}`)
+  }
+
   return (
     <section>
       <PageHeader
@@ -57,7 +63,12 @@ export default function BusinessesView() {
         title="Businesses"
         subtitle={subtitle}
         actions={
-          <Button variant="ghost" onClick={() => show('**CSV exported** — check your downloads')}>
+          <Button
+            variant="ghost"
+            onClick={handleExportCsv}
+            disabled={isLoading || isError || businesses.length === 0}
+            className="disabled:cursor-not-allowed disabled:opacity-50"
+          >
             ↓ Export CSV
           </Button>
         }

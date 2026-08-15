@@ -24,13 +24,15 @@ export function buildDiscoveryPayload({ countryId, cityIds, customCity, industry
       .filter(Boolean)
       .join(', ')
 
-  const errors = []
-  if (!country) errors.push('Select a country.')
-  if (cityLabels.length === 0) errors.push('Select or type at least one city.')
-  if (!customNiche) errors.push('Enter a custom niche or select an industry.')
+  const fieldErrors = {}
+  if (!country) fieldErrors.country = 'Select a country.'
+  if (cityLabels.length === 0) fieldErrors.city = 'Select or type at least one city.'
+  if (!customNiche) fieldErrors.niche = 'Enter a custom niche or select an industry.'
+
+  const errors = Object.values(fieldErrors)
 
   if (errors.length > 0) {
-    return { payload: null, errors }
+    return { payload: null, errors, fieldErrors }
   }
 
   return {
@@ -41,5 +43,6 @@ export function buildDiscoveryPayload({ countryId, cityIds, customCity, industry
       ...(filterIds.includes(RATING_FILTER_ID) ? { min_rating: MIN_RATING_VALUE } : {}),
     },
     errors: [],
+    fieldErrors: {},
   }
 }

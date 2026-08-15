@@ -14,6 +14,7 @@ from app.schemas.discovery_job import (
     DiscoveryJobStatusLiteral,
     DiscoveryRunListResponse,
     DiscoveryRunResponse,
+    DiscoveryRunStatsResponse,
     DiscoverySourceLiteral,
 )
 from app.schemas.errors import ApiError, ErrorDetail
@@ -53,6 +54,11 @@ async def list_runs(
     session: AsyncSession = Depends(get_db_session),
 ) -> DiscoveryRunListResponse:
     return await job_tracking_service.list_runs(session, page=page, page_size=page_size)
+
+
+@router.get("/discovery-runs/stats", response_model=DiscoveryRunStatsResponse)
+async def get_run_stats(session: AsyncSession = Depends(get_db_session)) -> DiscoveryRunStatsResponse:
+    return await job_tracking_service.get_run_stats(session)
 
 
 @router.get("/discovery-runs/{run_id}", response_model=DiscoveryRunResponse)

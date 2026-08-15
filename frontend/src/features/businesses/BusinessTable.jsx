@@ -1,21 +1,30 @@
 import { Fragment, useState } from 'react'
-import { BarChart3, ShieldCheck, Sparkles, Mail, Plus, Lightbulb } from 'lucide-react'
+import { BarChart3, ShieldCheck, Sparkles, Mail, Plus, Check } from 'lucide-react'
 import Chip from '../../components/ui/Chip'
 import { scoreTone } from '../../constants/businesses'
 import { useViewStore } from '../../store/useViewStore'
 import { useToastStore } from '../../store/useToastStore'
 import { useAuditLead } from '../../hooks/useAuditLead'
+import { useGenerateOutreach } from '../../hooks/useGenerateOutreach'
+import { useUpdateLeadStage } from '../../hooks/useUpdateLeadStage'
 import AuditReportPanel from './AuditReportPanel'
 
 const HEADERS = ['Business', 'Rating', 'Website', 'Score', 'Actions']
 const ACTION_BTN =
-  'grid h-[29px] w-[29px] shrink-0 place-items-center rounded-lg border border-line-hi text-txt-dim transition-colors duration-150 hover:border-signal hover:text-signal'
+  'grid h-[29px] w-[29px] shrink-0 place-items-center rounded-lg border border-line-hi text-txt-dim transition-colors duration-150 hover:border-signal hover:text-signal disabled:pointer-events-none disabled:opacity-50'
+const SPINNER = 'h-3 w-3 animate-spin rounded-full border-2 border-txt-dim border-t-transparent'
 
 export default function BusinessTable({ businesses }) {
   const setView = useViewStore((s) => s.setView)
   const show = useToastStore((s) => s.show)
   const [expandedId, setExpandedId] = useState(null)
   const auditMutation = useAuditLead()
+  const outreachMutation = useGenerateOutreach()
+  const stageMutation = useUpdateLeadStage()
+
+  function openLeadView(view, business) {
+    setView(view, `Businesses / ${business.name}`, { leadId: business.id })
+  }
 
   if (businesses.length === 0) {
     return <p className="px-5 py-10 text-center text-[13px] text-txt-mute">No businesses match these filters.</p>
@@ -27,6 +36,37 @@ export default function BusinessTable({ businesses }) {
     if (nextExpanded && !business.audit) {
       auditMutation.mutate(business.id)
     }
+  }
+
+  // Generates real content via the same Groq-backed flow as Ask AI's
+  // outreach panel, then lands the user on the real editor with it —
+  // no fake "drafted" toast with nothing behind it.
+  function handleGenerateOutreach(business) {
+    const breadcrumb = `Businesses / ${business.name}`
+    outreachMutation.mutate(
+      { leadId: business.id, type: 'email', tone: 'default' },
+      {
+        onSuccess: (data) => {
+          setView('outreach-editor', breadcrumb, { leadId: business.id, type: 'email', generated: data, breadcrumb })
+        },
+        onError: (err) => show(err.message),
+      }
+    )
+  }
+
+  // Every lead already starts in the pipeline at "new_lead" (backend
+  // default), so "save" can't mean "add" — it means the user has decided to
+  // actively pursue it, i.e. advance it to "contacted", same real mutation
+  // the Pipeline board's drag-and-drop uses.
+  function handleSaveLead(business) {
+    if (business.pipelineStage !== 'new_lead') return
+    stageMutation.mutate(
+      { leadId: business.id, stage: 'contacted' },
+      {
+        onSuccess: () => show(`**${business.name}** moved to Contacted — logged to activity`),
+        onError: (err) => show(err.message),
+      }
+    )
   }
 
   return (
@@ -51,6 +91,9 @@ export default function BusinessTable({ businesses }) {
             const isExpanded = expandedId === b.id
             const isPending = auditMutation.isPending && auditMutation.variables === b.id
             const isError = auditMutation.isError && auditMutation.variables === b.id
+            const isOutreachPending = outreachMutation.isPending && outreachMutation.variables?.leadId === b.id
+            const isStagePending = stageMutation.isPending && stageMutation.variables?.leadId === b.id
+            const isSaved = b.pipelineStage != null && b.pipelineStage !== 'new_lead'
             return (
               <Fragment key={b.id}>
                 <tr className="border-b border-line transition-colors duration-100 last:border-none hover:bg-signal/[.03]">
@@ -70,7 +113,15 @@ export default function BusinessTable({ businesses }) {
                   </td>
                   <td className="px-3.5 py-[13px]">
                     {b.website ? (
-                      <span className="font-mono text-[12px] text-blue">{b.website}</span>
+                      <a
+                        href={b.websiteHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`Open ${b.website} in a new tab`}
+                        className="font-mono text-[12px] text-blue underline decoration-blue/30 underline-offset-2 transition-colors duration-150 hover:text-signal hover:decoration-signal/40"
+                      >
+                        {b.website}
+                      </a>
                     ) : (
                       <Chip tone="amber">No website</Chip>
                     )}
@@ -86,7 +137,7 @@ export default function BusinessTable({ businesses }) {
                   </td>
                   <td className="px-3.5 py-[13px]">
                     <div className="flex justify-end gap-1.5">
-                      {b.hasWebsite ? (
+                      {b.hasWebsite && (
                         <button
                           title={b.audit ? 'Re-run AI audit' : 'Run AI Audit'}
                           onClick={() => handleToggleAudit(b)}
@@ -95,19 +146,11 @@ export default function BusinessTable({ businesses }) {
                         >
                           <BarChart3 className="h-3.5 w-3.5" />
                         </button>
-                      ) : (
-                        <button
-                          title="Opportunity pitch"
-                          onClick={() => show('**No-website recommendation** generated — suggested: landing page + booking')}
-                          className={ACTION_BTN}
-                        >
-                          <Lightbulb className="h-3.5 w-3.5" />
-                        </button>
                       )}
                       {b.hasWebsite && (
                         <button
                           title="View full audit report"
-                          onClick={() => setView('audit', `Businesses / ${b.name}`, { leadId: b.id })}
+                          onClick={() => openLeadView('audit', b)}
                           className={ACTION_BTN}
                         >
                           <ShieldCheck className="h-3.5 w-3.5" />
@@ -115,17 +158,36 @@ export default function BusinessTable({ businesses }) {
                       )}
                       <button
                         title="Ask AI"
-                        onClick={() => setView('askai', `Businesses / ${b.name}`, { leadId: b.id })}
+                        onClick={() => openLeadView('askai', b)}
                         className={ACTION_BTN}
                       >
                         <Sparkles className="h-3.5 w-3.5" />
                       </button>
-                      <button title="Generate outreach" onClick={() => show(`**Cold email** drafted for ${b.name}`)} className={ACTION_BTN}>
-                        <Mail className="h-3.5 w-3.5" />
+                      <button
+                        title="Generate outreach email"
+                        onClick={() => handleGenerateOutreach(b)}
+                        disabled={isOutreachPending}
+                        className={ACTION_BTN}
+                      >
+                        {isOutreachPending ? <span className={SPINNER} /> : <Mail className="h-3.5 w-3.5" />}
                       </button>
-                      <button title="Save lead" onClick={() => show(`**${b.name}** added to pipeline`)} className={ACTION_BTN}>
-                        <Plus className="h-3.5 w-3.5" />
-                      </button>
+                      {isSaved ? (
+                        <span
+                          title={`Already ${b.pipelineStage.replace('_', ' ')}`}
+                          className={`${ACTION_BTN} cursor-default border-signal/40 text-signal hover:border-signal/40 hover:text-signal`}
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                        </span>
+                      ) : (
+                        <button
+                          title="Move to Contacted"
+                          onClick={() => handleSaveLead(b)}
+                          disabled={isStagePending}
+                          className={ACTION_BTN}
+                        >
+                          {isStagePending ? <span className={SPINNER} /> : <Plus className="h-3.5 w-3.5" />}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
