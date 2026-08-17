@@ -1,0 +1,37 @@
+# Keep the build context small and secrets out of the image.
+.git/
+.gitignore
+.gitattributes
+.claude/
+DEPLOYMENT_ROADMAP.md
+README.md
+
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.venv/
+**/venv/
+**/node_modules/
+
+# Real credentials live in Secret Manager (cloud) or a local .env — never in
+# the image. Examples are excluded too; nothing in the image reads them.
+**/.env
+**/.env.*
+# Exception: this holds no secret, only VITE_API_BASE_URL=/, and the frontend
+# build stage needs it. Supplying it as a file rather than a build ENV avoids
+# MSYS shells rewriting the bare "/" into a Windows path.
+!frontend/.env.production
+
+# Scraper output/state: written only by the worker, which does not run in this
+# image. Also large and machine-specific.
+backend/browser_profiles/
+backend/screenshots/
+backend/scripts/cloud-sql-proxy*
+
+# Rebuilt inside the image by the frontend stage.
+frontend/dist/
+
+# Tests are not run from the image.
+backend/tests/
+frontend/src/**/*.test.js
+frontend/src/**/*.test.jsx

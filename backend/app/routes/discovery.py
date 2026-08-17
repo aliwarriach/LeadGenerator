@@ -5,6 +5,7 @@ from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.db.session import get_db_session
 from app.schemas.discovery import DiscoveryRequest, DiscoveryResponse
 from app.schemas.discovery_job import (
@@ -25,7 +26,16 @@ from app.services.job_tracking_service import DiscoveryJobNotFoundError, Discove
 router = APIRouter(tags=["discovery"])
 
 
-def get_redis_pool(request: Request) -> ArqRedis:
+def get_redis_pool(request: Request) -> ArqRedis | None:
+    """The ARQ pool, or None when this process doesn't own the queue.
+
+    In "db" dispatch mode the API never enqueues — it writes the DiscoveryJob
+    row and app/workers/dispatcher.py picks it up — so having no Redis is the
+    expected state there, not a 503-worthy outage.
+    """
+    if get_settings().dispatch_mode == "db":
+        return None
+
     redis = request.app.state.arq_redis
     if redis is None:
         raise ApiError(
@@ -38,7 +48,7 @@ def get_redis_pool(request: Request) -> ArqRedis:
 @router.post("/start-discovery", response_model=DiscoveryResponse, status_code=202)
 async def start_discovery(
     payload: DiscoveryRequest,
-    redis: ArqRedis = Depends(get_redis_pool),
+    redis: ArqRedis | None = Depends(get_redis_pool),
     session: AsyncSession = Depends(get_db_session),
 ) -> DiscoveryResponse:
     try:

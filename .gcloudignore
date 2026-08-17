@@ -1,0 +1,31 @@
+# Controls what `gcloud builds submit` uploads as the build context.
+#
+# REQUIRED, not optional: without this file gcloud falls back to the root
+# .gitignore, which does not exclude backend/.venv or frontend/node_modules
+# (those are covered by nested .gitignore files gcloud never reads). The upload
+# would be hundreds of megabytes of dependencies that the Dockerfile reinstalls
+# anyway.
+.git/
+.gitignore
+.gcloudignore
+.claude/
+DEPLOYMENT_ROADMAP.md
+
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.venv/
+**/venv/
+**/node_modules/
+
+**/.env
+**/.env.*
+# Exception: no secret in it (VITE_API_BASE_URL=/), and the Dockerfile's
+# frontend stage reads it. Excluded here it would never reach the build.
+!frontend/.env.production
+
+backend/browser_profiles/
+backend/screenshots/
+backend/scripts/cloud-sql-proxy*
+
+frontend/dist/

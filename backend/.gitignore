@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 .env
+.env.production
 .pytest_cache/
 screenshots/
 browser_profiles/
+scripts/cloud-sql-proxy*

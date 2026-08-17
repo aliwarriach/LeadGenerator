@@ -1,4 +1,6 @@
+import os
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -14,6 +16,12 @@ class Settings(BaseSettings):
     # confirmed to cause exactly this failure during local setup.
     database_url: str = "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/lead_generator"
     db_echo: bool = False
+    # SQLAlchemy's defaults (5 + 10 overflow) allow 15 connections per process.
+    # A small managed Postgres instance caps out around 25 total, and several
+    # processes share it (API instances + the ARQ worker + the dispatcher), so
+    # the per-process ceiling is lowered rather than left to chance.
+    db_pool_size: int = 3
+    db_max_overflow: int = 2
 
     # Queue (ARQ / Redis)
     redis_url: str = "redis://127.0.0.1:6379/0"
@@ -23,6 +31,39 @@ class Settings(BaseSettings):
     # own deployment (e.g. production, or multiple uvicorn workers sharing
     # one queue) — each API process would otherwise spawn its own worker.
     auto_start_arq_worker: bool = True
+
+    # How a queued discovery job reaches the ARQ worker.
+    #   "queue" — the API enqueues into Redis itself. Local development, and
+    #             any deployment where the API and the worker share a Redis.
+    #   "db"    — the API only writes the DiscoveryJob row (already created
+    #             before enqueue anyway) and stops there; app/workers/
+    #             dispatcher.py claims pending rows and enqueues them into the
+    #             Redis its own worker consumes. This is what allows the API
+    #             and the worker to live on hosts that cannot share a Redis —
+    #             e.g. the API on Cloud Run, the scrapers on an operator
+    #             machine behind NAT. In this mode the API needs no Redis.
+    dispatch_mode: Literal["queue", "db"] = "queue"
+    dispatcher_poll_seconds: float = 5.0
+    dispatcher_batch_size: int = 20
+
+    # Built SPA served by this API when the directory exists — same-origin in
+    # production, which is why CORS is a non-issue there. Absent in local dev,
+    # where Vite serves the frontend on its own port.
+    frontend_dist_dir: str = "frontend_dist"
+
+    # HTTP Basic credentials guarding the whole app (except /health, which the
+    # platform health check calls unauthenticated). Both unset — the default —
+    # disables the check entirely, keeping local dev and the test suite open.
+    basic_auth_user: str | None = None
+    basic_auth_password: str | None = None
+
+    # Cloud SQL instance connection name (project:region:instance). The app
+    # itself never reads this — DATABASE_URL already points at the Auth
+    # Proxy's local port — but it lives in the same .env.production the
+    # operator scripts load, and pydantic-settings rejects unrecognized keys
+    # by default, so it must be a real field rather than a stray env var.
+    # worker-prod.ps1 reads it directly to start the proxy on the right instance.
+    cloud_sql_connection_name: str | None = None
 
     # CORS — origins allowed to call this API from a browser (the frontend's
     # dev server). Vite's default port is 5173, but it falls forward to 5174+
@@ -133,7 +174,17 @@ class Settings(BaseSettings):
     groq_base_url: str = "https://api.groq.com/openai/v1/chat/completions"
     # Verify this against Groq's current model list before relying on it —
     # available models change over time; override via .env if it's retired.
-    groq_model: str = "llama-3.3-70b-versatile"
+    # llama-3.3-70b-versatile was retired by Groq (confirmed via a live
+    # /openai/v1/models call — no longer in the catalog, every Groq-backed
+    # endpoint returned a 404). qwen/qwen3.6-27b was tried next and rejected
+    # by Groq's own server-side validation (400 json_validate_failed) — it's
+    # a reasoning model that doesn't reliably put valid JSON in `content`
+    # under response_format=json_object, only in Groq's separate `reasoning`
+    # field. openai/gpt-oss-20b was confirmed live (direct API call, the
+    # actual audit prompt) to return clean schema-matching JSON in `content`
+    # every time, with its chain-of-thought correctly segregated into
+    # `reasoning` instead of leaking into the field this app parses.
+    groq_model: str = "openai/gpt-oss-20b"
     groq_timeout_seconds: float = 30.0
     # Retries here are for malformed/unparseable JSON output specifically
     # (an LLM occasionally returns non-conforming JSON despite json_object
@@ -169,4 +220,9 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    # ENV_FILE lets one checkout drive two environments without duplicating the
+    # code: `.env` for local development, `.env.production` for the operator
+    # machine that runs the dispatcher/worker against the deployed database.
+    # Real environment variables still win over whichever file is loaded, which
+    # is what makes container deployments (no file at all) work unchanged.
+    return Settings(_env_file=os.environ.get("ENV_FILE", ".env"))

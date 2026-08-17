@@ -75,6 +75,24 @@ async def test_start_discovery_fans_out_per_city():
     assert {job.city for job in response.jobs} == {"Lahore", "Karachi"}
 
 
+async def test_start_discovery_creates_rows_without_enqueueing_in_db_dispatch_mode():
+    """"db" dispatch mode: this process has no queue. The job rows are the whole
+    hand-off — the dispatcher enqueues them from the other side."""
+    mock_session = AsyncMock()
+
+    p_run, p_job, p_attach, p_fail, run = _patched_tracking()
+    with p_run, p_job as mock_create_job, p_attach as mock_attach, p_fail as mock_fail:
+        response = await discovery_service.start_discovery(None, mock_session, _request())
+
+    assert response.run_id == run.id
+    assert len(response.jobs) == 3
+    assert {job.source for job in response.jobs} == {"google_maps", "facebook", "serper"}
+    assert mock_create_job.await_count == 3
+    # Nothing was queued, so nothing has an ARQ id yet and nothing failed.
+    mock_attach.assert_not_awaited()
+    mock_fail.assert_not_awaited()
+
+
 async def test_start_discovery_marks_job_failed_and_raises_when_enqueue_fails():
     mock_session = AsyncMock()
     mock_redis = AsyncMock()

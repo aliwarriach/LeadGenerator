@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.discovery_job import DiscoveryJob, DiscoveryJobEvent, DiscoveryRun
+from app.models.discovery_job import DiscoveryJob, DiscoveryJobEvent, DiscoveryJobStatus, DiscoveryRun
 from app.schemas.errors import ErrorDetail
 
 
@@ -38,6 +38,40 @@ async def insert_job(
 async def set_arq_job_id(session: AsyncSession, job_id: uuid.UUID, arq_job_id: str) -> None:
     await session.execute(update(DiscoveryJob).where(DiscoveryJob.id == job_id).values(arq_job_id=arq_job_id))
     await session.commit()
+
+
+async def claim_pending_jobs(
+    session: AsyncSession, *, limit: int
+) -> list[tuple[DiscoveryJob, float | None]]:
+    """Lock and return undispatched pending jobs, each with its run's min_rating.
+
+    `arq_job_id IS NULL` is the "nobody has handed this to a worker yet"
+    marker: it is set only after a successful enqueue, which is what separates
+    a job still waiting to be dispatched from one already sitting in the
+    queue. No extra column or migration is needed because it is already
+    nullable, unique and indexed.
+
+    min_rating lives on the run rather than the job, so it is joined in here
+    instead of costing a second query per claimed row.
+
+    FOR UPDATE ... SKIP LOCKED is what makes this safe to run more than once
+    concurrently: a second caller skips rows the first has locked rather than
+    blocking on them or handing out duplicates. Locks are held until the
+    caller's transaction ends.
+    """
+    stmt = (
+        select(DiscoveryJob, DiscoveryRun.min_rating)
+        .join(DiscoveryRun, DiscoveryRun.id == DiscoveryJob.run_id)
+        .where(
+            DiscoveryJob.status == DiscoveryJobStatus.PENDING,
+            DiscoveryJob.arq_job_id.is_(None),
+        )
+        .order_by(DiscoveryJob.created_at.asc())
+        .limit(limit)
+        .with_for_update(of=DiscoveryJob, skip_locked=True)
+    )
+    result = await session.execute(stmt)
+    return [(job, min_rating) for job, min_rating in result.all()]
 
 
 async def get_run(session: AsyncSession, run_id: uuid.UUID) -> DiscoveryRun | None:

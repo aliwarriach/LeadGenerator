@@ -9,11 +9,16 @@ from app.services import job_tracking_service
 
 logger = logging.getLogger(__name__)
 
-_JOB_NAMES: tuple[tuple[str, str], ...] = (
-    ("google_maps", "scrape_google_maps_job"),
-    ("facebook", "scrape_facebook_job"),
-    ("serper", "scrape_serper_job"),
-)
+# Source -> ARQ function name. Public because app/workers/dispatcher.py needs
+# the same mapping to enqueue rows this service only created (see the "db"
+# dispatch mode below). Insertion order is the fan-out order.
+JOB_NAMES_BY_SOURCE: dict[str, str] = {
+    "google_maps": "scrape_google_maps_job",
+    "facebook": "scrape_facebook_job",
+    "serper": "scrape_serper_job",
+}
+
+_JOB_NAMES: tuple[tuple[str, str], ...] = tuple(JOB_NAMES_BY_SOURCE.items())
 
 
 class DiscoveryQueueError(Exception):
@@ -25,7 +30,7 @@ def _build_location(city: str, country: str) -> str:
 
 
 async def start_discovery(
-    redis: ArqRedis, session: AsyncSession, request: DiscoveryRequest
+    redis: ArqRedis | None, session: AsyncSession, request: DiscoveryRequest
 ) -> DiscoveryResponse:
     """Queue all discovery sources, in parallel, for every requested city.
 
@@ -38,6 +43,12 @@ async def start_discovery(
     the row's id (not ARQ's job id) is what's returned to the caller and is
     what the worker reports progress against, so the tracking row always
     exists before the ARQ worker (a separate process) could possibly start it.
+
+    `redis` is None in "db" dispatch mode (Settings.dispatch_mode), where this
+    process has no queue of its own: because the rows already exist before any
+    enqueue, they *are* the complete hand-off, and app/workers/dispatcher.py
+    picks them up from the database and enqueues them into the Redis its own
+    worker consumes.
     """
     run = await job_tracking_service.create_run(
         session,
@@ -57,25 +68,27 @@ async def start_discovery(
                 session, run_id=run.id, source=source, query=request.custom_niche, location=location
             )
 
-            arq_job = await redis.enqueue_job(
-                job_name, str(job_row.id), request.custom_niche, location, request.min_rating
-            )
-            if arq_job is None:
-                logger.error(
-                    "Failed to enqueue %s job for niche=%r city=%r", job_name, request.custom_niche, city
+            if redis is not None:
+                arq_job = await redis.enqueue_job(
+                    job_name, str(job_row.id), request.custom_niche, location, request.min_rating
                 )
-                await job_tracking_service.mark_job_enqueue_failed(
-                    session,
-                    job_row.id,
-                    ErrorDetail(
-                        code="queue_unavailable",
-                        message=f"Could not queue {source} discovery job for {city}",
-                        retryable=True,
-                    ),
-                )
-                raise DiscoveryQueueError(f"Could not queue {source} discovery job for {city}")
+                if arq_job is None:
+                    logger.error(
+                        "Failed to enqueue %s job for niche=%r city=%r", job_name, request.custom_niche, city
+                    )
+                    await job_tracking_service.mark_job_enqueue_failed(
+                        session,
+                        job_row.id,
+                        ErrorDetail(
+                            code="queue_unavailable",
+                            message=f"Could not queue {source} discovery job for {city}",
+                            retryable=True,
+                        ),
+                    )
+                    raise DiscoveryQueueError(f"Could not queue {source} discovery job for {city}")
 
-            await job_tracking_service.attach_arq_job_id(session, job_row.id, arq_job.job_id)
+                await job_tracking_service.attach_arq_job_id(session, job_row.id, arq_job.job_id)
+
             jobs.append(DiscoveryJobRef(source=source, city=city, job_id=job_row.id))
 
     return DiscoveryResponse(

@@ -92,6 +92,38 @@ async def test_update_job_status_includes_error_fields_when_error_given():
     assert compiled_params["error_retry_after_seconds"] == 1800
 
 
+async def test_claim_pending_jobs_returns_job_and_run_min_rating_pairs():
+    mock_session = AsyncMock()
+    job = MagicMock(spec=DiscoveryJob)
+    result = MagicMock()
+    result.all.return_value = [(job, 4.5)]
+    mock_session.execute = AsyncMock(return_value=result)
+
+    claimed = await discovery_job_repository.claim_pending_jobs(mock_session, limit=20)
+
+    assert claimed == [(job, 4.5)]
+
+
+async def test_claim_pending_jobs_selects_only_undispatched_pending_rows_with_skip_locked():
+    mock_session = AsyncMock()
+    result = MagicMock()
+    result.all.return_value = []
+    mock_session.execute = AsyncMock(return_value=result)
+
+    await discovery_job_repository.claim_pending_jobs(mock_session, limit=5)
+
+    compiled = str(mock_session.execute.call_args.args[0].compile(dialect=postgresql.dialect()))
+    # arq_job_id IS NULL is the "not yet dispatched" marker — without it the
+    # dispatcher would re-enqueue jobs already sitting in the queue.
+    assert "discovery_jobs.arq_job_id IS NULL" in compiled
+    assert "discovery_jobs.status =" in compiled
+    # min_rating lives on the run, so it has to be joined rather than re-queried.
+    assert "JOIN discovery_runs" in compiled
+    assert "discovery_runs.min_rating" in compiled
+    # SKIP LOCKED is what keeps a second dispatcher from handing out duplicates.
+    assert "FOR UPDATE OF discovery_jobs SKIP LOCKED" in compiled
+
+
 async def test_list_jobs_for_recent_runs_returns_scalars():
     mock_session = AsyncMock()
     jobs = [MagicMock(spec=DiscoveryJob), MagicMock(spec=DiscoveryJob)]
