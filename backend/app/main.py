@@ -3,16 +3,16 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from redis.exceptions import RedisError
 
 from app.core.config import Settings, get_settings
+from app.core.error_handlers import register_error_handlers
 from app.core.security import configure_basic_auth
+from app.core.security_headers import configure_security_headers
 from app.routes import activities, dashboard, discovery, health, leads, outreach, outreach_drafts
-from app.schemas.errors import ApiError
 from app.workers.queue import get_arq_pool
 from app.workers.supervisor import WorkerSupervisor
 
@@ -73,7 +73,12 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 # by CORSMiddleware before it ever reaches the 401 check, and error responses
 # still carry CORS headers instead of surfacing in the browser as opaque
 # network failures.
+#
+# For the same reason, security headers are registered *after* auth and so sit
+# outside it: the auth middleware short-circuits a 401 without calling inward,
+# and a response that never reaches the headers middleware never gets them.
 configure_basic_auth(app, settings)
+configure_security_headers(app, settings)
 
 app.add_middleware(
     CORSMiddleware,
@@ -83,9 +88,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.exception_handler(ApiError)
-async def handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
-    return JSONResponse(status_code=exc.status_code, content={"error": exc.error.model_dump()})
+register_error_handlers(app)
 
 
 app.include_router(health.router)

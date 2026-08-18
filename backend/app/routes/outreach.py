@@ -4,6 +4,8 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.authz import require
+from app.core.permissions import Permission
 from app.core.config import Settings, get_settings
 from app.db.session import get_db_session
 from app.schemas.outreach import (
@@ -19,7 +21,7 @@ from app.services.outreach_service import AiOutreachUnavailableError
 router = APIRouter(prefix="/outreach", tags=["outreach"])
 
 
-@router.post("/email/{lead_id}", response_model=EmailGenerationResult)
+@router.post("/email/{lead_id}", response_model=EmailGenerationResult, dependencies=[Depends(require(Permission.OUTREACH_GENERATE))])
 async def generate_email(
     lead_id: uuid.UUID,
     tone: OutreachToneLiteral = Query(default="default"),
@@ -41,7 +43,7 @@ async def generate_email(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.post("/whatsapp/{lead_id}", response_model=WhatsAppGenerationResult)
+@router.post("/whatsapp/{lead_id}", response_model=WhatsAppGenerationResult, dependencies=[Depends(require(Permission.OUTREACH_GENERATE))])
 async def generate_whatsapp(
     lead_id: uuid.UUID,
     tone: OutreachToneLiteral = Query(default="default"),
@@ -64,7 +66,7 @@ async def generate_whatsapp(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.post("/proposal/{lead_id}", response_model=ProposalGenerationResult)
+@router.post("/proposal/{lead_id}", response_model=ProposalGenerationResult, dependencies=[Depends(require(Permission.OUTREACH_GENERATE))])
 async def generate_proposal(
     lead_id: uuid.UUID,
     tone: OutreachToneLiteral = Query(default="default"),

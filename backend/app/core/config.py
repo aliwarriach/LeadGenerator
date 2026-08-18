@@ -4,6 +4,9 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.permissions import Role
+from app.core.principal import AuthAccount
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
@@ -54,8 +57,47 @@ class Settings(BaseSettings):
     # HTTP Basic credentials guarding the whole app (except /health, which the
     # platform health check calls unauthenticated). Both unset — the default —
     # disables the check entirely, keeping local dev and the test suite open.
+    # That default is only tolerable because configure_basic_auth() refuses to
+    # start a non-development environment without credentials.
     basic_auth_user: str | None = None
     basic_auth_password: str | None = None
+    # Role carried by the primary credential above.
+    basic_auth_role: Role = Role.OWNER
+
+    # Additional Basic credentials, each with its own role — a JSON array in
+    # the environment, e.g.
+    #   AUTH_ACCOUNTS=[{"username":"analyst","password":"...","role":"viewer"}]
+    # This is what makes the role system real without a users table: a
+    # read-only account can be handed out without granting write access. See
+    # app/core/principal.py::AuthAccount for why roles live on credentials.
+    auth_accounts: list[AuthAccount] = []
+
+    # Role granted when no credentials are configured at all (local dev, tests).
+    # Owner by default so development behaves exactly as it did before roles
+    # existed; set to "viewer" to exercise a lower-privilege path locally.
+    unauthenticated_role: Role = Role.OWNER
+
+    # Passwords shorter than this only produce a startup warning, not a
+    # failure — a weak password still protects the app, and refusing to boot
+    # over it would turn a security nudge into an outage.
+    min_auth_password_length: int = 12
+
+    # Security response headers (app/core/security_headers.py). The CSP is
+    # overridable because it has to match whatever the built SPA loads — the
+    # default matches the current build (self-hosted JS/CSS + Google Fonts).
+    security_headers_enabled: bool = True
+    content_security_policy: str = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "object-src 'none'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
 
     # Cloud SQL instance connection name (project:region:instance). The app
     # itself never reads this — DATABASE_URL already points at the Auth

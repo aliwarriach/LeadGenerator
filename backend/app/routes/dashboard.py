@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.authz import require
+from app.core.permissions import Permission
 from app.db.session import get_db_session
 from app.schemas.dashboard import (
     DashboardActivityResponse,
@@ -14,7 +16,7 @@ from app.services.lead_service import LeadServiceUnavailableError
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
-@router.get("/stats", response_model=DashboardStatsResponse)
+@router.get("/stats", response_model=DashboardStatsResponse, dependencies=[Depends(require(Permission.DASHBOARD_READ))])
 async def get_stats(session: AsyncSession = Depends(get_db_session)) -> DashboardStatsResponse:
     try:
         return await dashboard_service.get_stats(session)
@@ -22,7 +24,7 @@ async def get_stats(session: AsyncSession = Depends(get_db_session)) -> Dashboar
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.get("/discovery-volume", response_model=DiscoveryVolumeResponse)
+@router.get("/discovery-volume", response_model=DiscoveryVolumeResponse, dependencies=[Depends(require(Permission.DASHBOARD_READ))])
 async def get_discovery_volume(
     days: int = Query(default=7, ge=1, le=90),
     session: AsyncSession = Depends(get_db_session),
@@ -33,7 +35,7 @@ async def get_discovery_volume(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.get("/lead-stage-mix", response_model=LeadStageMixResponse)
+@router.get("/lead-stage-mix", response_model=LeadStageMixResponse, dependencies=[Depends(require(Permission.DASHBOARD_READ))])
 async def get_lead_stage_mix(session: AsyncSession = Depends(get_db_session)) -> LeadStageMixResponse:
     try:
         return await dashboard_service.get_lead_stage_mix(session)
@@ -41,7 +43,7 @@ async def get_lead_stage_mix(session: AsyncSession = Depends(get_db_session)) ->
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.get("/activity", response_model=DashboardActivityResponse)
+@router.get("/activity", response_model=DashboardActivityResponse, dependencies=[Depends(require(Permission.DASHBOARD_READ))])
 async def list_recent_activity(
     limit: int = Query(default=10, ge=1, le=50),
     session: AsyncSession = Depends(get_db_session),

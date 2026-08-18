@@ -13,6 +13,7 @@ ErrorCode = Literal[
     "lead_not_found",
     "queue_unavailable",
     "unauthorized",
+    "forbidden",
 ]
 
 

@@ -789,6 +789,16 @@ behavior, not deployment concerns — do not change them.
 | `GROQ_API_KEY` | `leadgen-groq-api-key:latest` |
 | `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` | `leadgen-basic-auth:latest` |
 
+> **Changed 2026-08-18 (authorization work):** `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD`
+> are now **mandatory** whenever `ENVIRONMENT != development` — the app raises
+> `InsecureConfigurationError` at startup instead of logging a warning and serving
+> publicly. The Cloud Run service already injects them from `leadgen-basic-auth`, so this
+> deployment is unaffected; a revision deployed *without* that secret will now fail its
+> health check rather than come up open. Two optional vars were added: `BASIC_AUTH_ROLE`
+> (default `owner`) and `AUTH_ACCOUNTS` (JSON array of extra `{username, password, role}`
+> credentials). The local worker/dispatcher are unaffected — neither imports `app.main`.
+> See `AI_ASSISTANT_ROADMAP.md` §3 Phase 1.
+
 `REDIS_URL` is **not set** — unused in `db` mode. `SERPER_API_KEY` / `PAGESPEED_API_KEY`
 are worker-only (§1.4). `HUNTER_API_KEY` / `OPENCORPORATES_API_KEY` stay unset by your
 existing choice; the enrichers degrade gracefully.

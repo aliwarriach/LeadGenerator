@@ -7,6 +7,8 @@ import warnings
 import httpx
 from Wappalyzer import Wappalyzer, WebPage
 
+from app.core.url_guard import safe_get
+
 logger = logging.getLogger(__name__)
 
 _analyzer: Wappalyzer | None = None
@@ -37,7 +39,9 @@ async def detect_tech_stack(
     no external API or key involved.
     """
     try:
-        response = await client.get(website, timeout=fetch_timeout_seconds, follow_redirects=True)
+        # safe_get, not client.get — `website` is untrusted input fetched from
+        # inside the VPC. See app/core/url_guard.py.
+        response = await safe_get(client, website, timeout=fetch_timeout_seconds)
         response.raise_for_status()
     except Exception as exc:  # noqa: BLE001 - enrichment failures must never propagate
         logger.warning("Wappalyzer fetch failed for %s: %s", website, exc)

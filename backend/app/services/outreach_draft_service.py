@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 
@@ -94,4 +95,7 @@ async def generate_draft_pdf(session: AsyncSession, draft_id: uuid.UUID) -> byte
     if draft.type != OutreachType.PROPOSAL:
         raise PdfNotSupportedError(f"PDF export is only supported for proposal drafts, not {draft.type}")
 
-    return render_proposal_pdf(draft.content)
+    # Markdown parsing + xhtml2pdf is synchronous CPU work. Called directly it
+    # would block the event loop for the whole render, stalling every other
+    # concurrent request (including /health) on this process.
+    return await asyncio.to_thread(render_proposal_pdf, draft.content)

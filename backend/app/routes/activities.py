@@ -3,6 +3,8 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.authz import require
+from app.core.permissions import Permission
 from app.db.session import get_db_session
 from app.schemas.activity import ActivityCreateRequest, ActivityListResponse, ActivityResponse
 from app.services import activity_service
@@ -11,7 +13,7 @@ from app.services.lead_service import LeadNotFoundError, LeadServiceUnavailableE
 router = APIRouter(prefix="/activities", tags=["activities"])
 
 
-@router.post("/{lead_id}", response_model=ActivityResponse)
+@router.post("/{lead_id}", response_model=ActivityResponse, dependencies=[Depends(require(Permission.ACTIVITIES_WRITE))])
 async def create_activity(
     lead_id: uuid.UUID,
     request: ActivityCreateRequest,
@@ -27,7 +29,7 @@ async def create_activity(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.get("/{lead_id}", response_model=ActivityListResponse)
+@router.get("/{lead_id}", response_model=ActivityListResponse, dependencies=[Depends(require(Permission.ACTIVITIES_READ))])
 async def list_activities(
     lead_id: uuid.UUID, session: AsyncSession = Depends(get_db_session)
 ) -> ActivityListResponse:

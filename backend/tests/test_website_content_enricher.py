@@ -1,10 +1,26 @@
+import ipaddress
+from unittest.mock import AsyncMock, patch
+
 import httpx
+import pytest
 
 from app.enrichers.website_content_enricher import extract_content
 
 
 def _client_with_handler(handler) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+# Every test here drives a MockTransport, so no request leaves the machine —
+# but url_guard.safe_get resolves the hostname for real before connecting.
+# Stubbing the resolver (its documented seam) keeps these tests off DNS.
+@pytest.fixture(autouse=True)
+def _stub_dns():
+    with patch(
+        "app.core.url_guard.resolve_host_addresses",
+        new=AsyncMock(return_value=[ipaddress.ip_address("93.184.216.34")]),
+    ):
+        yield
 
 
 async def test_extract_content_parses_title_meta_headings_and_text():
@@ -68,3 +84,26 @@ async def test_extract_content_returns_none_on_fetch_failure():
     content = await extract_content(client, "https://example.com", fetch_timeout_seconds=10, max_chars=3000)
 
     assert content is None
+
+
+async def test_extract_content_refuses_a_url_pointing_at_an_internal_address():
+    """The SSRF guard is wired in: an internal target must never be fetched,
+    regardless of what the transport would have returned."""
+    fetched = False
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal fetched
+        fetched = True
+        return httpx.Response(200, text="<html><title>internal</title></html>")
+
+    client = _client_with_handler(handler)
+    with patch(
+        "app.core.url_guard.resolve_host_addresses",
+        new=AsyncMock(return_value=[ipaddress.ip_address("169.254.169.254")]),
+    ):
+        content = await extract_content(
+            client, "http://metadata.internal", fetch_timeout_seconds=10, max_chars=3000
+        )
+
+    assert content is None
+    assert fetched is False

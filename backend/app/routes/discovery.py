@@ -5,6 +5,8 @@ from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.authz import require
+from app.core.permissions import Permission
 from app.core.config import get_settings
 from app.db.session import get_db_session
 from app.schemas.discovery import DiscoveryRequest, DiscoveryResponse
@@ -45,7 +47,7 @@ def get_redis_pool(request: Request) -> ArqRedis | None:
     return redis
 
 
-@router.post("/start-discovery", response_model=DiscoveryResponse, status_code=202)
+@router.post("/start-discovery", response_model=DiscoveryResponse, status_code=202, dependencies=[Depends(require(Permission.DISCOVERY_START))])
 async def start_discovery(
     payload: DiscoveryRequest,
     redis: ArqRedis | None = Depends(get_redis_pool),
@@ -57,7 +59,7 @@ async def start_discovery(
         raise ApiError(503, ErrorDetail(code="queue_unavailable", message=str(exc), retryable=True)) from exc
 
 
-@router.get("/discovery-runs", response_model=DiscoveryRunListResponse)
+@router.get("/discovery-runs", response_model=DiscoveryRunListResponse, dependencies=[Depends(require(Permission.DISCOVERY_READ))])
 async def list_runs(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
@@ -66,12 +68,12 @@ async def list_runs(
     return await job_tracking_service.list_runs(session, page=page, page_size=page_size)
 
 
-@router.get("/discovery-runs/stats", response_model=DiscoveryRunStatsResponse)
+@router.get("/discovery-runs/stats", response_model=DiscoveryRunStatsResponse, dependencies=[Depends(require(Permission.DISCOVERY_READ))])
 async def get_run_stats(session: AsyncSession = Depends(get_db_session)) -> DiscoveryRunStatsResponse:
     return await job_tracking_service.get_run_stats(session)
 
 
-@router.get("/discovery-runs/{run_id}", response_model=DiscoveryRunResponse)
+@router.get("/discovery-runs/{run_id}", response_model=DiscoveryRunResponse, dependencies=[Depends(require(Permission.DISCOVERY_READ))])
 async def get_run_detail(
     run_id: uuid.UUID,
     session: AsyncSession = Depends(get_db_session),
@@ -82,7 +84,7 @@ async def get_run_detail(
         raise ApiError(404, ErrorDetail(code="run_not_found", message=str(exc), retryable=False)) from exc
 
 
-@router.post("/discovery-runs/{run_id}/stop", response_model=DiscoveryRunResponse)
+@router.post("/discovery-runs/{run_id}/stop", response_model=DiscoveryRunResponse, dependencies=[Depends(require(Permission.DISCOVERY_STOP))])
 async def stop_run(
     run_id: uuid.UUID,
     session: AsyncSession = Depends(get_db_session),
@@ -93,7 +95,7 @@ async def stop_run(
         raise ApiError(404, ErrorDetail(code="run_not_found", message=str(exc), retryable=False)) from exc
 
 
-@router.get("/discovery-jobs", response_model=DiscoveryJobListResponse)
+@router.get("/discovery-jobs", response_model=DiscoveryJobListResponse, dependencies=[Depends(require(Permission.DISCOVERY_READ))])
 async def list_jobs(
     status: DiscoveryJobStatusLiteral | None = None,
     source: DiscoverySourceLiteral | None = None,
@@ -107,7 +109,7 @@ async def list_jobs(
     )
 
 
-@router.get("/discovery-jobs/{job_id}", response_model=DiscoveryJobResponse)
+@router.get("/discovery-jobs/{job_id}", response_model=DiscoveryJobResponse, dependencies=[Depends(require(Permission.DISCOVERY_READ))])
 async def get_job_status(
     job_id: uuid.UUID,
     session: AsyncSession = Depends(get_db_session),
@@ -118,7 +120,7 @@ async def get_job_status(
         raise ApiError(404, ErrorDetail(code="job_not_found", message=str(exc), retryable=False)) from exc
 
 
-@router.post("/discovery-jobs/{job_id}/stop", response_model=DiscoveryJobResponse)
+@router.post("/discovery-jobs/{job_id}/stop", response_model=DiscoveryJobResponse, dependencies=[Depends(require(Permission.DISCOVERY_STOP))])
 async def stop_job(
     job_id: uuid.UUID,
     session: AsyncSession = Depends(get_db_session),
@@ -129,7 +131,7 @@ async def stop_job(
         raise ApiError(404, ErrorDetail(code="job_not_found", message=str(exc), retryable=False)) from exc
 
 
-@router.get("/discovery-jobs/{job_id}/events", response_model=DiscoveryJobEventListResponse)
+@router.get("/discovery-jobs/{job_id}/events", response_model=DiscoveryJobEventListResponse, dependencies=[Depends(require(Permission.DISCOVERY_READ))])
 async def list_job_events(
     job_id: uuid.UUID,
     after: int | None = Query(default=None, ge=0, description="Cursor from a previous response's next_cursor"),

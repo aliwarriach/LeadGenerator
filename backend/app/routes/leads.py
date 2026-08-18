@@ -5,6 +5,8 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.authz import require
+from app.core.permissions import Permission
 from app.core.config import Settings, get_settings
 from app.db.session import get_db_session
 from app.schemas.activity import StageUpdateRequest
@@ -19,7 +21,7 @@ from app.services.website_audit_service import AiAuditUnavailableError, LeadHasN
 router = APIRouter(tags=["leads"])
 
 
-@router.get("/leads", response_model=LeadListResponse)
+@router.get("/leads", response_model=LeadListResponse, dependencies=[Depends(require(Permission.LEADS_READ))])
 async def list_leads(
     source: Literal["google_maps", "facebook", "serper"] | None = None,
     has_website: bool | None = None,
@@ -53,7 +55,7 @@ async def list_leads(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.get("/leads/{lead_id}", response_model=LeadResponse)
+@router.get("/leads/{lead_id}", response_model=LeadResponse, dependencies=[Depends(require(Permission.LEADS_READ))])
 async def get_lead(lead_id: uuid.UUID, session: AsyncSession = Depends(get_db_session)) -> LeadResponse:
     try:
         return await lead_service.get_lead(session, lead_id)
@@ -63,7 +65,7 @@ async def get_lead(lead_id: uuid.UUID, session: AsyncSession = Depends(get_db_se
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.patch("/leads/{lead_id}", response_model=LeadResponse)
+@router.patch("/leads/{lead_id}", response_model=LeadResponse, dependencies=[Depends(require(Permission.LEADS_WRITE))])
 async def update_lead(
     lead_id: uuid.UUID,
     update: LeadUpdateRequest,
@@ -80,7 +82,7 @@ async def update_lead(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.patch("/leads/{lead_id}/stage", response_model=LeadResponse)
+@router.patch("/leads/{lead_id}/stage", response_model=LeadResponse, dependencies=[Depends(require(Permission.PIPELINE_WRITE))])
 async def update_lead_stage(
     lead_id: uuid.UUID,
     request: StageUpdateRequest,
@@ -97,7 +99,7 @@ async def update_lead_stage(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.post("/leads/{lead_id}/audit", response_model=LeadAuditResponse)
+@router.post("/leads/{lead_id}/audit", response_model=LeadAuditResponse, dependencies=[Depends(require(Permission.AUDIT_RUN))])
 async def audit_lead(
     lead_id: uuid.UUID,
     session: AsyncSession = Depends(get_db_session),
@@ -119,7 +121,7 @@ async def audit_lead(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.post("/leads/{lead_id}/chat", response_model=ChatMessageResponse)
+@router.post("/leads/{lead_id}/chat", response_model=ChatMessageResponse, dependencies=[Depends(require(Permission.LEADS_READ))])
 async def chat_with_lead(
     lead_id: uuid.UUID,
     request: ChatMessageRequest,
@@ -142,7 +144,7 @@ async def chat_with_lead(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.get("/leads/{lead_id}/chat", response_model=ChatHistoryResponse)
+@router.get("/leads/{lead_id}/chat", response_model=ChatHistoryResponse, dependencies=[Depends(require(Permission.LEADS_READ))])
 async def get_lead_chat_history(
     lead_id: uuid.UUID, session: AsyncSession = Depends(get_db_session)
 ) -> ChatHistoryResponse:

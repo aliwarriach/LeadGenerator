@@ -6,6 +6,8 @@ from typing import Any, TypedDict
 import httpx
 from bs4 import BeautifulSoup
 
+from app.core.url_guard import safe_get
+
 logger = logging.getLogger(__name__)
 
 _HEADING_TAGS = ("h1", "h2")
@@ -35,7 +37,9 @@ async def extract_content(
     propagate" contract.
     """
     try:
-        response = await client.get(website, timeout=fetch_timeout_seconds, follow_redirects=True)
+        # safe_get, not client.get: `website` is untrusted scraped/user input
+        # and this runs inside the VPC. See app/core/url_guard.py.
+        response = await safe_get(client, website, timeout=fetch_timeout_seconds)
         response.raise_for_status()
     except Exception as exc:  # noqa: BLE001 - enrichment failures must never propagate
         logger.warning("Website content fetch failed for %s: %s", website, exc)
