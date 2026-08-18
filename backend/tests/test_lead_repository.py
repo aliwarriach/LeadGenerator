@@ -45,6 +45,26 @@ def test_apply_lead_filters_combines_all_filters():
     assert "leads.query" in compiled
 
 
+def test_apply_lead_filters_escapes_ilike_wildcards_in_name_contains():
+    """A literal '%' or '_' typed by the caller must filter on that literal
+    character, not act as an ILIKE wildcard — e.g. a business named
+    "50% Off Plumbing". See SecurityIssues.md hardening item 11."""
+    stmt = _apply_lead_filters(
+        select(Lead),
+        source=None,
+        has_website=None,
+        min_rating=None,
+        min_website_score=None,
+        name_contains="50%_off",
+        search_location_contains=None,
+        niche_equals=None,
+    )
+    compiled = stmt.compile(dialect=postgresql.dialect())
+    bind_value = next(iter(compiled.params.values()))
+    assert bind_value == "%50\\%\\_off%"
+    assert "ESCAPE" in str(compiled)
+
+
 async def test_list_leads_returns_items_and_total_count():
     mock_session = AsyncMock()
     fake_leads = [Lead(name="A"), Lead(name="B")]

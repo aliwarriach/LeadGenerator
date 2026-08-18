@@ -39,6 +39,12 @@ _REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
 # redirect loop burn the request timeout.
 _MAX_REDIRECTS = 5
 
+# A few MB is generous for the HTML/headers this fetches (page audits,
+# Wappalyzer fingerprinting) and well below anything that threatens a Cloud
+# Run instance's memory. Neither caller capped this before — see
+# SecurityIssues.md M-6.
+_DEFAULT_MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+
 
 class UnsafeUrlError(Exception):
     """The URL is malformed, uses a non-HTTP scheme, or resolves to an address
@@ -106,18 +112,68 @@ async def validate_public_http_url(url: str) -> None:
             raise UnsafeUrlError(f"Host {host!r} resolves to non-public address {address}")
 
 
-async def safe_get(client: httpx.AsyncClient, url: str, *, timeout: float) -> httpx.Response:
+async def _read_capped(response: httpx.Response, max_bytes: int) -> httpx.Response:
+    """Reads `response`'s streamed body into a bounded buffer, aborting once
+    it exceeds `max_bytes` — a server that lies about (or omits)
+    Content-Length and simply keeps sending bytes must not be allowed to
+    exhaust process memory (SecurityIssues.md M-6). Returns a fully-read
+    Response built from the capped bytes, so `.text`/`.json()` work
+    normally on the result.
+    """
+    content_length = response.headers.get("content-length")
+    if content_length is not None and content_length.isdigit() and int(content_length) > max_bytes:
+        await response.aclose()
+        raise UnsafeUrlError(f"Response declared {content_length} bytes, exceeding the {max_bytes}-byte limit")
+
+    data = bytearray()
+    async for chunk in response.aiter_bytes():
+        data.extend(chunk)
+        if len(data) > max_bytes:
+            await response.aclose()
+            raise UnsafeUrlError(f"Response body exceeded the {max_bytes}-byte limit")
+
+    await response.aclose()
+    return httpx.Response(
+        status_code=response.status_code,
+        headers=response.headers,
+        content=bytes(data),
+        request=response.request,
+    )
+
+
+async def _fetch_hop(client: httpx.AsyncClient, url: str, timeout: float, max_bytes: int) -> httpx.Response:
+    request = client.build_request("GET", url, timeout=timeout)
+    response = await client.send(request, stream=True, follow_redirects=False)
+
+    if response.status_code in _REDIRECT_STATUS_CODES:
+        # Headers (including Location) are already available once the
+        # response starts — no need to read the (likely empty) redirect body.
+        await response.aclose()
+        return response
+
+    return await _read_capped(response, max_bytes)
+
+
+async def safe_get(
+    client: httpx.AsyncClient, url: str, *, timeout: float, max_bytes: int = _DEFAULT_MAX_RESPONSE_BYTES
+) -> httpx.Response:
     """GET `url`, validating it and every redirect target first.
 
     Redirects are followed manually — `follow_redirects=True` would hand the
     final hop to httpx unchecked, which is exactly the hole this closes.
-    Raises `UnsafeUrlError` for a rejected target, or any `httpx` error the
-    caller already handles.
+    Raises `UnsafeUrlError` for a rejected target, an oversized response body
+    (see `_read_capped`), or any `httpx` error the caller already handles.
+
+    Each hop is wrapped in a `timeout`-second wall-clock deadline covering
+    the *whole* download, not just each individual read: httpx's `timeout`
+    only bounds a single I/O operation, so a server that trickles a few
+    bytes at a time — never going long enough between them to trip a
+    per-operation read timeout — would otherwise never be cut off.
     """
     current = url
     for _ in range(_MAX_REDIRECTS + 1):
         await validate_public_http_url(current)
-        response = await client.get(current, timeout=timeout, follow_redirects=False)
+        response = await asyncio.wait_for(_fetch_hop(client, current, timeout, max_bytes), timeout=timeout)
 
         if response.status_code not in _REDIRECT_STATUS_CODES:
             return response

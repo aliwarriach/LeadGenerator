@@ -113,7 +113,7 @@ def test_the_full_route_inventory_is_guarded_as_intended():
         ("PATCH", "/leads/{lead_id}"): Permission.LEADS_WRITE,
         ("PATCH", "/leads/{lead_id}/stage"): Permission.PIPELINE_WRITE,
         ("POST", "/leads/{lead_id}/audit"): Permission.AUDIT_RUN,
-        ("POST", "/leads/{lead_id}/chat"): Permission.LEADS_READ,
+        ("POST", "/leads/{lead_id}/chat"): Permission.ASSISTANT_USE,
         ("GET", "/leads/{lead_id}/chat"): Permission.LEADS_READ,
         ("POST", "/outreach/email/{lead_id}"): Permission.OUTREACH_GENERATE,
         ("POST", "/outreach/whatsapp/{lead_id}"): Permission.OUTREACH_GENERATE,

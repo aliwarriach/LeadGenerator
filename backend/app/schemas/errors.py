@@ -14,6 +14,8 @@ ErrorCode = Literal[
     "queue_unavailable",
     "unauthorized",
     "forbidden",
+    "too_many_attempts",
+    "rate_limited",
 ]
 
 

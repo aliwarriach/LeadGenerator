@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.authz import require
 from app.core.permissions import Permission
 from app.core.config import Settings, get_settings
+from app.core.rate_limit import require_llm_quota
 from app.db.session import get_db_session
 from app.schemas.activity import StageUpdateRequest
 from app.schemas.chat import ChatHistoryResponse, ChatMessageRequest, ChatMessageResponse
@@ -99,7 +100,11 @@ async def update_lead_stage(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.post("/leads/{lead_id}/audit", response_model=LeadAuditResponse, dependencies=[Depends(require(Permission.AUDIT_RUN))])
+@router.post(
+    "/leads/{lead_id}/audit",
+    response_model=LeadAuditResponse,
+    dependencies=[Depends(require(Permission.AUDIT_RUN)), Depends(require_llm_quota)],
+)
 async def audit_lead(
     lead_id: uuid.UUID,
     session: AsyncSession = Depends(get_db_session),
@@ -119,9 +124,15 @@ async def audit_lead(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except AiAuditUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except LeadServiceUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.post("/leads/{lead_id}/chat", response_model=ChatMessageResponse, dependencies=[Depends(require(Permission.LEADS_READ))])
+@router.post(
+    "/leads/{lead_id}/chat",
+    response_model=ChatMessageResponse,
+    dependencies=[Depends(require(Permission.ASSISTANT_USE)), Depends(require_llm_quota)],
+)
 async def chat_with_lead(
     lead_id: uuid.UUID,
     request: ChatMessageRequest,
@@ -142,6 +153,8 @@ async def chat_with_lead(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except AiChatUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except LeadServiceUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/leads/{lead_id}/chat", response_model=ChatHistoryResponse, dependencies=[Depends(require(Permission.LEADS_READ))])
@@ -152,3 +165,5 @@ async def get_lead_chat_history(
         return await chat_service.get_chat_history(session, lead_id)
     except LeadNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LeadServiceUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

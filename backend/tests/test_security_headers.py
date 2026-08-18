@@ -30,6 +30,14 @@ async def test_baseline_headers_are_present():
     assert response.headers["Referrer-Policy"] == "no-referrer"
     assert response.headers["Cross-Origin-Opener-Policy"] == "same-origin"
     assert response.headers["X-Robots-Tag"] == "noindex, nofollow"
+    assert "geolocation=()" in response.headers["Permissions-Policy"]
+
+
+async def test_the_default_csp_upgrades_insecure_requests():
+    async with _client(_app()) as client:
+        response = await client.get("/thing")
+
+    assert "upgrade-insecure-requests" in response.headers["Content-Security-Policy"]
 
 
 async def test_the_default_csp_permits_what_the_built_spa_actually_loads():

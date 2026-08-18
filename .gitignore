@@ -4,3 +4,12 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea/
+
+# Root-level catch-all: backend/.gitignore and frontend/.gitignore already
+# cover their own .env files, but a new top-level service directory would
+# not inherit that protection without this. See SecurityIssues.md
+# informational item 8.
+.env
+.env.*
+!.env.example
+!**/.env.example

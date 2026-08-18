@@ -12,7 +12,7 @@ from app.models.lead import Lead
 from app.repositories import lead_repository
 from app.schemas.outreach import EmailGenerationResult, ProposalGenerationResult, WhatsAppGenerationResult
 from app.services.lead_context import build_lead_context
-from app.services.lead_service import LeadNotFoundError
+from app.services.lead_service import LeadNotFoundError, LeadServiceUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,12 @@ class AiOutreachUnavailableError(Exception):
 
 
 async def _get_lead_or_raise(session: AsyncSession, lead_id: uuid.UUID) -> Lead:
-    lead = await lead_repository.get_by_id(session, lead_id)
+    try:
+        lead = await lead_repository.get_by_id(session, lead_id)
+    except Exception as exc:
+        logger.error("Failed to fetch lead %s", lead_id, exc_info=exc)
+        raise LeadServiceUnavailableError("Database connection failed") from exc
+
     if lead is None:
         raise LeadNotFoundError(f"Lead {lead_id} not found")
     return lead
@@ -51,6 +56,7 @@ async def generate_email(
         timeout_seconds=settings.groq_timeout_seconds,
         max_retries=settings.groq_max_retries,
         tone=tone,
+        max_tokens=settings.groq_max_tokens,
     )
     if result is None:
         raise AiOutreachUnavailableError(f"AI email generation failed for lead {lead_id} — Groq request or response was unusable")
@@ -78,6 +84,7 @@ async def generate_whatsapp_message(
         timeout_seconds=settings.groq_timeout_seconds,
         max_retries=settings.groq_max_retries,
         tone=tone,
+        max_tokens=settings.groq_max_tokens,
     )
     if result is None:
         raise AiOutreachUnavailableError(f"AI WhatsApp message generation failed for lead {lead_id} — Groq request or response was unusable")
@@ -105,6 +112,7 @@ async def generate_proposal(
         timeout_seconds=settings.groq_timeout_seconds,
         max_retries=settings.groq_max_retries,
         tone=tone,
+        max_tokens=settings.groq_max_tokens,
     )
     if result is None:
         raise AiOutreachUnavailableError(f"AI proposal generation failed for lead {lead_id} — Groq request or response was unusable")

@@ -8,7 +8,7 @@ from app.core.config import Settings
 from app.enrichers import groq_enricher, website_content_enricher
 from app.repositories import lead_repository
 from app.schemas.website_audit import LeadAuditResponse
-from app.services.lead_service import LeadNotFoundError
+from app.services.lead_service import LeadNotFoundError, LeadServiceUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,12 @@ async def audit_lead_website(
     regardless of whether anyone reviews it; this only runs when explicitly
     requested via POST /leads/{id}/audit.
     """
-    lead = await lead_repository.get_by_id(session, lead_id)
+    try:
+        lead = await lead_repository.get_by_id(session, lead_id)
+    except Exception as exc:
+        logger.error("Failed to fetch lead %s", lead_id, exc_info=exc)
+        raise LeadServiceUnavailableError("Database connection failed") from exc
+
     if lead is None:
         raise LeadNotFoundError(f"Lead {lead_id} not found")
     if not lead.website:
@@ -58,11 +63,17 @@ async def audit_lead_website(
         model=settings.groq_model,
         timeout_seconds=settings.groq_timeout_seconds,
         max_retries=settings.groq_max_retries,
+        max_tokens=settings.groq_max_tokens,
     )
     if result is None:
         raise AiAuditUnavailableError(f"AI audit failed for lead {lead_id} — Groq request or response was unusable")
 
-    updated = await lead_repository.update_ai_audit(session, lead_id, result)
+    try:
+        updated = await lead_repository.update_ai_audit(session, lead_id, result)
+    except Exception as exc:
+        logger.error("Failed to persist AI audit for lead %s", lead_id, exc_info=exc)
+        raise LeadServiceUnavailableError("Database connection failed") from exc
+
     if updated is None:
         # Lead existed moments ago but is gone now (e.g. concurrent delete) —
         # genuinely exceptional, not a normal not-found path.

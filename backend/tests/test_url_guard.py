@@ -1,3 +1,4 @@
+import asyncio
 import ipaddress
 from unittest.mock import AsyncMock, patch
 
@@ -173,3 +174,54 @@ async def test_safe_get_returns_a_redirect_that_carries_no_location():
         response = await safe_get(client, "https://example.com", timeout=5)
 
     assert response.status_code == 302
+
+
+# ---- safe_get / response size + wall-clock ceiling (SecurityIssues.md M-6) -
+
+
+async def test_safe_get_returns_full_body_under_the_byte_cap():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="a" * 100)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with _resolving_to("93.184.216.34"):
+        response = await safe_get(client, "https://example.com", timeout=5, max_bytes=1000)
+
+    assert response.text == "a" * 100
+
+
+async def test_safe_get_rejects_a_response_declaring_an_oversized_content_length():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-length": "1000000"}, text="small body")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with _resolving_to("93.184.216.34"):
+        with pytest.raises(UnsafeUrlError):
+            await safe_get(client, "https://example.com", timeout=5, max_bytes=1000)
+
+
+async def test_safe_get_rejects_a_body_exceeding_the_byte_cap_with_no_content_length():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        # No explicit content-length header — the streamed-read cap must
+        # still catch it since a server can omit or lie about the header.
+        return httpx.Response(200, content=b"x" * 2000)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with _resolving_to("93.184.216.34"):
+        with pytest.raises(UnsafeUrlError):
+            await safe_get(client, "https://example.com", timeout=5, max_bytes=1000)
+
+
+async def test_safe_get_enforces_a_total_wall_clock_deadline_per_hop():
+    """httpx's `timeout` only bounds a single I/O operation — a handler that
+    is simply slow to finish (never idling long enough to trip a
+    per-operation read timeout on its own) must still be cut off."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(1.0)
+        return httpx.Response(200, text="too slow")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with _resolving_to("93.184.216.34"):
+        with pytest.raises(asyncio.TimeoutError):
+            await safe_get(client, "https://example.com", timeout=0.05)

@@ -48,13 +48,19 @@ async def detect_tech_stack(
         return None
 
     try:
-        webpage = WebPage(str(response.url), response.text, dict(response.headers))
-        analyzer = _get_analyzer()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            technologies = await asyncio.to_thread(analyzer.analyze, webpage)
+        # WebPage's own parsing (BeautifulSoup under the hood) is synchronous
+        # CPU work just like analyze() — both run off the event loop together
+        # so neither stalls other concurrent requests (SecurityIssues.md M-6).
+        technologies = await asyncio.to_thread(_analyze, str(response.url), response.text, dict(response.headers))
     except Exception as exc:  # noqa: BLE001 - enrichment failures must never propagate
         logger.warning("Wappalyzer analysis failed for %s: %s", website, exc)
         return None
 
     return sorted(technologies) or None
+
+
+def _analyze(url: str, html: str, headers: dict[str, str]) -> set[str]:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        webpage = WebPage(url, html, headers)
+        return _get_analyzer().analyze(webpage)

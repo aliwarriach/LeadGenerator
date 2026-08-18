@@ -7,7 +7,7 @@ from app.core.config import Settings
 from app.models.lead import Lead
 from app.schemas.outreach import EmailGenerationResult, ProposalGenerationResult, ProposalSection, WhatsAppGenerationResult
 from app.services import outreach_service
-from app.services.lead_service import LeadNotFoundError
+from app.services.lead_service import LeadNotFoundError, LeadServiceUnavailableError
 from app.services.outreach_service import AiOutreachUnavailableError
 
 
@@ -118,6 +118,14 @@ async def test_generate_email_defaults_tone_to_default():
 
     _, kwargs = mock_draft.call_args
     assert kwargs["tone"] == "default"
+
+
+async def test_generate_email_raises_service_unavailable_on_db_error():
+    with patch(
+        "app.services.outreach_service.lead_repository.get_by_id", new=AsyncMock(side_effect=Exception("db down"))
+    ):
+        with pytest.raises(LeadServiceUnavailableError):
+            await outreach_service.generate_email(AsyncMock(), AsyncMock(), uuid.uuid4(), _settings())
 
 
 async def test_generate_whatsapp_message_raises_not_found_when_lead_missing():

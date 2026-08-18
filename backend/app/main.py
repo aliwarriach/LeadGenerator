@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from redis.exceptions import RedisError
 
-from app.core.config import Settings, get_settings
+from app.core.config import Settings, effective_cors_origins, get_settings
 from app.core.error_handlers import register_error_handlers
 from app.core.security import configure_basic_auth
 from app.core.security_headers import configure_security_headers
@@ -82,7 +82,7 @@ configure_security_headers(app, settings)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_allowed_origins,
+    allow_origins=effective_cors_origins(settings),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

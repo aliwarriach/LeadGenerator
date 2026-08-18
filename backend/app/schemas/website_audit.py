@@ -1,7 +1,17 @@
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
+
+# Matches Lead.ai_issues' column width (ARRAY(String(512))) — an over-long
+# model response would otherwise reach the database and raise there instead
+# of failing validation at this boundary. See SecurityIssues.md L-4.
+_IssueStr = Annotated[str, StringConstraints(max_length=512)]
+# The count cap is arbitrary (a real audit lists a handful of issues) but
+# bounds how much of a runaway/adversarial response gets persisted and later
+# replayed into every other prompt for the lead (see SecurityIssues.md M-2).
+_MAX_ISSUES = 50
 
 
 class WebsiteAuditResult(BaseModel):
@@ -12,8 +22,9 @@ class WebsiteAuditResult(BaseModel):
     conversion_score: int = Field(ge=1, le=10)
     content_score: int = Field(ge=1, le=10)
     trust_score: int = Field(ge=1, le=10)
-    issues: list[str]
-    summary: str
+    issues: list[_IssueStr] = Field(max_length=_MAX_ISSUES)
+    # Matches Lead.ai_summary's column width (String(4096)).
+    summary: str = Field(max_length=4096)
 
 
 class LeadAuditResponse(BaseModel):

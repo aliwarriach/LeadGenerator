@@ -2,6 +2,8 @@ import base64
 import binascii
 import logging
 import secrets
+import time
+from dataclasses import dataclass
 
 from fastapi import FastAPI
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -21,6 +23,59 @@ _UNPROTECTED_PATHS = frozenset({"/health"})
 
 # Without this header a browser shows a blank 401 instead of a login prompt.
 _CHALLENGE_HEADERS = {"WWW-Authenticate": 'Basic realm="Lead Generator", charset="UTF-8"'}
+
+
+@dataclass
+class _ThrottleState:
+    failures: int = 0
+    locked_until: float = 0.0
+
+
+class _LoginThrottle:
+    """In-process exponential backoff on failed Basic-auth attempts, keyed
+    independently by source IP and by attempted username.
+
+    Nothing slowed a credential attack against this app's sole perimeter
+    control before this — see SecurityIssues.md M-4. In-process is adequate
+    at today's single-instance scale; move to Redis-backed if the API ever
+    scales past one instance. `_FREE_ATTEMPTS` tolerates the ordinary
+    "typo'd password, tried again" case without locking anyone out —
+    backoff only kicks in once a run of failures looks automated.
+    """
+
+    _FREE_ATTEMPTS = 5
+    _BASE_DELAY_SECONDS = 1.0
+    _MAX_DELAY_SECONDS = 60.0
+    # Bounds memory under a sustained distributed attack: once full, new keys
+    # are simply not tracked rather than growing the table without limit —
+    # degrades back to "no throttle" for the newest attackers, not an OOM.
+    _MAX_TRACKED_KEYS = 10_000
+
+    def __init__(self) -> None:
+        self._state: dict[str, _ThrottleState] = {}
+
+    def seconds_until_unlocked(self, key: str) -> float | None:
+        state = self._state.get(key)
+        if state is None:
+            return None
+        remaining = state.locked_until - time.monotonic()
+        return remaining if remaining > 0 else None
+
+    def record_failure(self, key: str) -> None:
+        state = self._state.get(key)
+        if state is None:
+            if len(self._state) >= self._MAX_TRACKED_KEYS:
+                return
+            state = self._state[key] = _ThrottleState()
+
+        state.failures += 1
+        if state.failures > self._FREE_ATTEMPTS:
+            exponent = state.failures - self._FREE_ATTEMPTS - 1
+            delay = min(self._BASE_DELAY_SECONDS * (2**exponent), self._MAX_DELAY_SECONDS)
+            state.locked_until = time.monotonic() + delay
+
+    def record_success(self, key: str) -> None:
+        self._state.pop(key, None)
 
 
 class InsecureConfigurationError(RuntimeError):
@@ -47,19 +102,52 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
         if not accounts:
             raise ValueError("BasicAuthMiddleware requires at least one account")
         self._accounts = tuple(accounts)
+        self._throttle = _LoginThrottle()
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if request.url.path in _UNPROTECTED_PATHS:
             return await call_next(request)
 
+        client_ip = request.client.host if request.client else "unknown"
+        attempted_username = _attempted_username(request.headers.get("Authorization"))
+
+        for key in (client_ip, attempted_username):
+            if key is None:
+                continue
+            retry_after = self._throttle.seconds_until_unlocked(key)
+            if retry_after is not None:
+                logger.warning(
+                    "Authentication throttled for %r from %s — %.0fs remaining", attempted_username, client_ip, retry_after
+                )
+                error = ErrorDetail(
+                    code="too_many_attempts",
+                    message="Too many failed login attempts — try again shortly",
+                    retryable=True,
+                    retry_after_seconds=int(retry_after) + 1,
+                )
+                return JSONResponse(
+                    status_code=429,
+                    content={"error": error.model_dump()},
+                    headers={"Retry-After": str(int(retry_after) + 1)},
+                )
+
         account = self._authenticate(request.headers.get("Authorization"))
         if account is None:
+            self._throttle.record_failure(client_ip)
+            if attempted_username is not None:
+                self._throttle.record_failure(attempted_username)
+            logger.warning("Authentication failed for %r from %s", attempted_username, client_ip)
+
             error = ErrorDetail(
                 code="unauthorized", message="Valid credentials are required", retryable=False
             )
             return JSONResponse(
                 status_code=401, content={"error": error.model_dump()}, headers=_CHALLENGE_HEADERS
             )
+
+        self._throttle.record_success(client_ip)
+        self._throttle.record_success(account.username)
+        logger.info("Authentication succeeded for %r (role=%s) from %s", account.username, account.role.value, client_ip)
 
         request.state.principal = Principal.for_role(account.username, account.role)
         return await call_next(request)
@@ -103,6 +191,13 @@ def _decode_basic_credentials(header: str | None) -> tuple[str, str] | None:
     if not separator:
         return None
     return username, password
+
+
+def _attempted_username(header: str | None) -> str | None:
+    """The username half of `header`, for logging/throttling only — never
+    the password. None if the header doesn't parse far enough to have one."""
+    credentials = _decode_basic_credentials(header)
+    return credentials[0] if credentials is not None else None
 
 
 def build_auth_accounts(settings: Settings) -> list[AuthAccount]:

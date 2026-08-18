@@ -28,6 +28,7 @@ export default function AuditReportPanel({ audit, pending, error, onRetry }) {
       )}
       {audit && (
         <div className="rounded-lg border border-line bg-ink-soft px-4 py-3.5">
+          <p className="mb-3 text-[11px] uppercase tracking-wide text-txt-mute">AI-generated · source: LLM analysis via Groq</p>
           <div className="mb-3 flex flex-wrap gap-2">
             {SCORE_FIELDS.map(({ key, label }) => (
               <Chip key={key} tone={scoreTone(audit[key] * 10)} className="font-mono">

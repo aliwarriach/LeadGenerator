@@ -29,5 +29,12 @@ NON_BUSINESS_DOMAINS = (
 def is_business_domain(url: str | None) -> bool:
     if not url:
         return False
-    netloc = urlparse(url).netloc.lower()
-    return bool(netloc) and not any(domain in netloc for domain in NON_BUSINESS_DOMAINS)
+    hostname = (urlparse(url).hostname or "").lower()
+    if not hostname:
+        return False
+    # Host suffix match rather than a substring test on the whole netloc —
+    # the old check would also (harmlessly, since it only ever over-rejects)
+    # match a business actually named e.g. "myfacebook.com". See L-5.
+    return not any(
+        hostname == domain or hostname.endswith(f".{domain}") for domain in NON_BUSINESS_DOMAINS
+    )

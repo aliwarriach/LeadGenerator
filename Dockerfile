@@ -50,6 +50,15 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENV FRONTEND_DIST_DIR=/app/frontend_dist
 
+# Runs as root by default otherwise, which removes a containment layer if any
+# other finding in this app escalates to code execution — a compromised
+# runtime process would have no OS-level barrier left. See SecurityIssues.md
+# L-2. `screenshots`/`browser_profiles` aren't created by the API process
+# itself, but `chown` covers them too in case a shared image path ever does.
+RUN groupadd --system app && useradd --system --gid app --home /app --no-create-home appuser \
+    && chown -R appuser:app /app
+USER appuser
+
 # Overridden by the platform's injected $PORT; declared for local `docker run`.
 EXPOSE 8080
 

@@ -8,7 +8,7 @@ from app.core.config import Settings
 from app.models.lead import Lead
 from app.schemas.website_audit import WebsiteAuditResult
 from app.services import website_audit_service
-from app.services.lead_service import LeadNotFoundError
+from app.services.lead_service import LeadNotFoundError, LeadServiceUnavailableError
 from app.services.website_audit_service import AiAuditUnavailableError, LeadHasNoWebsiteError
 
 
@@ -77,6 +77,39 @@ async def test_audit_lead_website_raises_when_groq_evaluation_fails():
         ),
     ):
         with pytest.raises(AiAuditUnavailableError):
+            await website_audit_service.audit_lead_website(AsyncMock(), AsyncMock(), lead.id, _settings())
+
+
+async def test_audit_lead_website_raises_service_unavailable_on_db_error_fetching_lead():
+    with patch(
+        "app.services.website_audit_service.lead_repository.get_by_id",
+        new=AsyncMock(side_effect=Exception("db down")),
+    ):
+        with pytest.raises(LeadServiceUnavailableError):
+            await website_audit_service.audit_lead_website(AsyncMock(), AsyncMock(), uuid.uuid4(), _settings())
+
+
+async def test_audit_lead_website_raises_service_unavailable_on_db_error_persisting_result():
+    lead = _lead()
+    audit = WebsiteAuditResult(
+        ui_score=7, conversion_score=5, content_score=6, trust_score=8,
+        issues=["No clear CTA"], summary="Decent site, weak conversion path.",
+    )
+    with (
+        patch("app.services.website_audit_service.lead_repository.get_by_id", new=AsyncMock(return_value=lead)),
+        patch(
+            "app.services.website_audit_service.website_content_enricher.extract_content",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.website_audit_service.groq_enricher.evaluate_website", new=AsyncMock(return_value=audit)
+        ),
+        patch(
+            "app.services.website_audit_service.lead_repository.update_ai_audit",
+            new=AsyncMock(side_effect=Exception("db down")),
+        ),
+    ):
+        with pytest.raises(LeadServiceUnavailableError):
             await website_audit_service.audit_lead_website(AsyncMock(), AsyncMock(), lead.id, _settings())
 
 

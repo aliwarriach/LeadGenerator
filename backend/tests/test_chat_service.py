@@ -9,7 +9,7 @@ from app.models.lead import Lead
 from app.models.lead_chat_message import LeadChatMessage
 from app.services import chat_service
 from app.services.chat_service import AiChatUnavailableError
-from app.services.lead_service import LeadNotFoundError
+from app.services.lead_service import LeadNotFoundError, LeadServiceUnavailableError
 
 
 def _lead(**overrides) -> Lead:
@@ -150,6 +150,35 @@ async def test_send_chat_message_includes_bounded_history_and_lead_context_in_pr
     assert messages[1] == {"role": "user", "content": "What's their weakest point?"}
     assert messages[2] == {"role": "assistant", "content": "Slow homepage load."}
     assert messages[-1] == {"role": "user", "content": "And pricing?"}
+
+
+async def test_send_chat_message_raises_service_unavailable_on_db_error_fetching_lead():
+    with patch(
+        "app.services.chat_service.lead_repository.get_by_id", new=AsyncMock(side_effect=Exception("db down"))
+    ):
+        with pytest.raises(LeadServiceUnavailableError):
+            await chat_service.send_chat_message(AsyncMock(), AsyncMock(), uuid.uuid4(), "hi", _settings())
+
+
+async def test_send_chat_message_raises_service_unavailable_on_db_error_persisting_reply():
+    lead = _lead()
+    with (
+        patch("app.services.chat_service.lead_repository.get_by_id", new=AsyncMock(return_value=lead)),
+        patch(
+            "app.services.chat_service.lead_chat_repository.list_recent_messages",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.chat_service.groq_enricher.send_chat_completion",
+            new=AsyncMock(return_value="a reply"),
+        ),
+        patch(
+            "app.services.chat_service.lead_chat_repository.add_message",
+            new=AsyncMock(side_effect=Exception("db down")),
+        ),
+    ):
+        with pytest.raises(LeadServiceUnavailableError):
+            await chat_service.send_chat_message(AsyncMock(), AsyncMock(), lead.id, "hi", _settings())
 
 
 async def test_get_chat_history_raises_not_found_when_lead_missing():

@@ -96,7 +96,8 @@ class Settings(BaseSettings):
         "object-src 'none'; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
-        "form-action 'self'"
+        "form-action 'self'; "
+        "upgrade-insecure-requests"
     )
 
     # Cloud SQL instance connection name (project:region:instance). The app
@@ -228,6 +229,15 @@ class Settings(BaseSettings):
     # `reasoning` instead of leaking into the field this app parses.
     groq_model: str = "openai/gpt-oss-20b"
     groq_timeout_seconds: float = 30.0
+    # Sent as `max_tokens` on every Groq call. Uncapped generation is an open
+    # cost/latency tap on top of having no other budget in front of these
+    # endpoints — 2048 comfortably covers the longest structured response
+    # (the 5-section proposal) with headroom, and bounds free-form chat
+    # replies to the same ceiling.
+    groq_max_tokens: int = 2048
+    # Per-`Principal.subject` call budget shared across every Groq-backed
+    # route (audit, chat, outreach x3) — see SecurityIssues.md M-5.
+    llm_rate_limit_per_hour: int = 200
     # Retries here are for malformed/unparseable JSON output specifically
     # (an LLM occasionally returns non-conforming JSON despite json_object
     # mode), not general network flakiness — one retry is enough to smooth
@@ -258,6 +268,26 @@ class Settings(BaseSettings):
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     )
+
+
+def effective_cors_origins(settings: Settings) -> list[str]:
+    """The CORS origin list actually used for `CORSMiddleware`.
+
+    `cors_allowed_origins`' default is the Vite dev server's localhost
+    ports, which is correct for local development but must never reach a
+    deployed environment as a silent fallback: a revision deployed without
+    CORS_ALLOWED_ORIGINS set would otherwise allow credentialed
+    cross-origin reads from any page served on those local ports
+    (SecurityIssues.md L-1). Deployments are same-origin (the SPA is served
+    by this API — see `main.mount_frontend`), so an empty list is the
+    correct default outside development; set CORS_ALLOWED_ORIGINS explicitly
+    if a deployment ever needs a separate frontend origin.
+    """
+    if settings.environment == "development":
+        return settings.cors_allowed_origins
+    if settings.cors_allowed_origins == Settings.model_fields["cors_allowed_origins"].default:
+        return []
+    return settings.cors_allowed_origins
 
 
 @lru_cache

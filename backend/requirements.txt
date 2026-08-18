@@ -8,7 +8,7 @@ pydantic-settings==2.14.2
 
 playwright==1.49.0
 playwright-stealth==1.0.6
-setuptools==75.6.0  # provides pkg_resources, required by playwright-stealth 1.0.6 (removed in setuptools 81+)
+setuptools>=78.1.1,<81  # provides pkg_resources, required by playwright-stealth 1.0.6 (removed in setuptools 81+); >=78.1.1 fixes GHSA-5rjg-fvgr-3xxf
 arq==0.26.3
 httpx==0.28.1
 python-Wappalyzer==0.3.1

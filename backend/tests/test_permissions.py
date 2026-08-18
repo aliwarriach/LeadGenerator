@@ -39,6 +39,10 @@ def test_viewer_holds_reads_only():
         Permission.DRAFTS_DELETE,
         Permission.DISCOVERY_START,
         Permission.DISCOVERY_STOP,
+        # Gates POST /leads/{id}/chat, which spends Groq quota and writes
+        # chat rows — a read-only role must not hold it. Regression for
+        # SecurityIssues.md M-3.
+        Permission.ASSISTANT_USE,
     ):
         assert write_permission not in viewer, write_permission
 

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.authz import require
 from app.core.permissions import Permission
 from app.core.config import Settings, get_settings
+from app.core.rate_limit import require_llm_quota
 from app.db.session import get_db_session
 from app.schemas.outreach import (
     EmailGenerationResult,
@@ -15,13 +16,17 @@ from app.schemas.outreach import (
     WhatsAppGenerationResult,
 )
 from app.services import outreach_service
-from app.services.lead_service import LeadNotFoundError
+from app.services.lead_service import LeadNotFoundError, LeadServiceUnavailableError
 from app.services.outreach_service import AiOutreachUnavailableError
 
 router = APIRouter(prefix="/outreach", tags=["outreach"])
 
 
-@router.post("/email/{lead_id}", response_model=EmailGenerationResult, dependencies=[Depends(require(Permission.OUTREACH_GENERATE))])
+@router.post(
+    "/email/{lead_id}",
+    response_model=EmailGenerationResult,
+    dependencies=[Depends(require(Permission.OUTREACH_GENERATE)), Depends(require_llm_quota)],
+)
 async def generate_email(
     lead_id: uuid.UUID,
     tone: OutreachToneLiteral = Query(default="default"),
@@ -41,9 +46,15 @@ async def generate_email(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except AiOutreachUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except LeadServiceUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.post("/whatsapp/{lead_id}", response_model=WhatsAppGenerationResult, dependencies=[Depends(require(Permission.OUTREACH_GENERATE))])
+@router.post(
+    "/whatsapp/{lead_id}",
+    response_model=WhatsAppGenerationResult,
+    dependencies=[Depends(require(Permission.OUTREACH_GENERATE)), Depends(require_llm_quota)],
+)
 async def generate_whatsapp(
     lead_id: uuid.UUID,
     tone: OutreachToneLiteral = Query(default="default"),
@@ -64,9 +75,15 @@ async def generate_whatsapp(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except AiOutreachUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except LeadServiceUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.post("/proposal/{lead_id}", response_model=ProposalGenerationResult, dependencies=[Depends(require(Permission.OUTREACH_GENERATE))])
+@router.post(
+    "/proposal/{lead_id}",
+    response_model=ProposalGenerationResult,
+    dependencies=[Depends(require(Permission.OUTREACH_GENERATE)), Depends(require_llm_quota)],
+)
 async def generate_proposal(
     lead_id: uuid.UUID,
     tone: OutreachToneLiteral = Query(default="default"),
@@ -85,4 +102,6 @@ async def generate_proposal(
         except LeadNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except AiOutreachUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except LeadServiceUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc

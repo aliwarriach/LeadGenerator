@@ -198,10 +198,15 @@ class BaseScraper(ABC):
             geolocation=self.config.geolocation,
             permissions=["geolocation"],
             proxy=self.config.proxy,
+            # --no-sandbox deliberately omitted: this worker runs on the
+            # operator machine alongside production DB credentials and an
+            # authenticated Cloud SQL Auth Proxy session, so the OS sandbox
+            # is the last containment layer between a renderer exploit on a
+            # scraped page and that host. It's a container-only workaround
+            # this deployment doesn't need. See SecurityIssues.md M-7.
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
-                "--no-sandbox",
             ],
         )
 

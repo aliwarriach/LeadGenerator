@@ -238,6 +238,77 @@ def test_a_short_password_warns_but_does_not_block_startup(caplog):
     assert any(m.cls is BasicAuthMiddleware for m in app.user_middleware)
 
 
+# ---- anti-automation throttle + logging (SecurityIssues.md M-4) ----------
+
+
+async def test_repeated_failed_attempts_are_throttled_after_the_free_budget():
+    app = _configured_app()
+
+    async with _client(app) as client:
+        # _LoginThrottle._FREE_ATTEMPTS is 5 — the lock only engages once a
+        # 6th consecutive failure is recorded, so it first bites on the
+        # *next* request after that (this one still 401s normally).
+        for _ in range(6):
+            response = await client.get("/leads", headers=_basic(_USER, "wrong"))
+            assert response.status_code == 401
+
+        throttled = await client.get("/leads", headers=_basic(_USER, "wrong"))
+
+    assert throttled.status_code == 429
+    assert throttled.json()["error"]["code"] == "too_many_attempts"
+    assert "Retry-After" in throttled.headers
+
+
+async def test_throttle_also_blocks_the_correct_password_while_locked():
+    """The lock is keyed by (IP, username), not by "was this attempt wrong"
+    — once tripped, even a correct credential must wait, or the attacker
+    just keeps guessing until one succeeds with no penalty."""
+    app = _configured_app()
+
+    async with _client(app) as client:
+        for _ in range(6):
+            await client.get("/leads", headers=_basic(_USER, "wrong"))
+
+        response = await client.get("/leads", headers=_basic(_USER, _PASSWORD))
+
+    assert response.status_code == 429
+
+
+async def test_successful_login_clears_the_throttle():
+    app = _configured_app()
+
+    async with _client(app) as client:
+        for _ in range(3):
+            await client.get("/leads", headers=_basic(_USER, "wrong"))
+
+        recovered = await client.get("/leads", headers=_basic(_USER, _PASSWORD))
+        # Back under the free-attempt budget after the reset.
+        still_ok = await client.get("/leads", headers=_basic(_USER, "wrong"))
+
+    assert recovered.status_code == 200
+    assert still_ok.status_code == 401
+
+
+async def test_authentication_failure_is_logged(caplog):
+    app = _configured_app()
+
+    with caplog.at_level("WARNING"):
+        async with _client(app) as client:
+            await client.get("/leads", headers=_basic(_USER, "wrong"))
+
+    assert any("Authentication failed" in record.message for record in caplog.records)
+
+
+async def test_authentication_success_is_logged(caplog):
+    app = _configured_app()
+
+    with caplog.at_level("INFO"):
+        async with _client(app) as client:
+            await client.get("/leads", headers=_basic(_USER, _PASSWORD))
+
+    assert any("Authentication succeeded" in record.message for record in caplog.records)
+
+
 async def test_permissions_are_enforced_against_the_authenticated_role():
     """End to end: credential → role → permission check on a real route."""
     app = FastAPI()

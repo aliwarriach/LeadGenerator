@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, TypedDict
 
@@ -46,26 +47,33 @@ async def extract_content(
         return None
 
     try:
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        title = soup.title.get_text(strip=True) if soup.title else None
-
-        meta_description: str | None = None
-        meta_tag = soup.find("meta", attrs={"name": "description"})
-        if meta_tag and meta_tag.get("content"):
-            meta_description = meta_tag["content"].strip() or None
-
-        headings = [
-            text
-            for tag in soup.find_all(_HEADING_TAGS)
-            if (text := tag.get_text(strip=True))
-        ][:_MAX_HEADINGS]
-
-        text_sample = soup.get_text(separator=" ", strip=True)[:max_chars]
-
-        return WebsiteContent(
-            title=title, meta_description=meta_description, headings=headings, text_sample=text_sample
-        )
+        # BeautifulSoup parsing is synchronous CPU work — run off the event
+        # loop so one large/adversarial page doesn't stall every other
+        # concurrent request on this process (SecurityIssues.md M-6).
+        return await asyncio.to_thread(_parse_content, response.text, max_chars)
     except Exception as exc:  # noqa: BLE001 - enrichment failures must never propagate
         logger.warning("Website content extraction failed for %s: %s", website, exc)
         return None
+
+
+def _parse_content(html: str, max_chars: int) -> WebsiteContent:
+    soup = BeautifulSoup(html, "html.parser")
+
+    title = soup.title.get_text(strip=True) if soup.title else None
+
+    meta_description: str | None = None
+    meta_tag = soup.find("meta", attrs={"name": "description"})
+    if meta_tag and meta_tag.get("content"):
+        meta_description = meta_tag["content"].strip() or None
+
+    headings = [
+        text
+        for tag in soup.find_all(_HEADING_TAGS)
+        if (text := tag.get_text(strip=True))
+    ][:_MAX_HEADINGS]
+
+    text_sample = soup.get_text(separator=" ", strip=True)[:max_chars]
+
+    return WebsiteContent(
+        title=title, meta_description=meta_description, headings=headings, text_sample=text_sample
+    )

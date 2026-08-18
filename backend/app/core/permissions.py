@@ -72,7 +72,11 @@ _OWNER_ONLY: frozenset[Permission] = frozenset({Permission.LEADS_DELETE, Permiss
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.OWNER: frozenset(Permission),
     Role.OPERATOR: frozenset(Permission) - _OWNER_ONLY,
-    Role.VIEWER: _READ_PERMISSIONS | {Permission.ASSISTANT_USE},
+    # ASSISTANT_USE deliberately excluded: it gates POST /leads/{id}/chat,
+    # which spends Groq quota and writes chat rows — real cost and real
+    # writes, neither of which belongs to a nominally read-only role. See
+    # SecurityIssues.md M-3.
+    Role.VIEWER: _READ_PERMISSIONS,
 }
 
 

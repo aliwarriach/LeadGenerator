@@ -31,6 +31,9 @@ _STATIC_HEADERS = {
     # Lead data and AI output are not something to hand to a third-party
     # translator/prefetch service.
     "X-Robots-Tag": "noindex, nofollow",
+    # This app uses none of these browser APIs — denying them outright means
+    # an XSS that got past the CSP still can't touch the camera/mic/location.
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), interest-cohort=()",
 }
 
 

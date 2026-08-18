@@ -15,6 +15,15 @@ _SORT_COLUMNS = {
 }
 
 
+def _escape_ilike_wildcards(value: str) -> str:
+    """Escapes literal `%`/`_`/`\\` in a substring-filter value before it's
+    wrapped in `%...%` for `ILIKE`. Parameterized, so this was never SQL
+    injection — but an unescaped `%`/`_` in `name`/`search_location` matches
+    more (or differently) than the substring the caller actually typed, e.g.
+    filtering by a business literally named "50% Off Plumbing"."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 async def upsert_lead(session: AsyncSession, lead_data: dict) -> Lead:
     """Insert a lead, or refresh it in place if `dedupe_key` already exists.
 
@@ -158,9 +167,11 @@ def _apply_lead_filters(
     if min_website_score is not None:
         stmt = stmt.where(Lead.website_score >= min_website_score)
     if name_contains:
-        stmt = stmt.where(Lead.name.ilike(f"%{name_contains}%"))
+        stmt = stmt.where(Lead.name.ilike(f"%{_escape_ilike_wildcards(name_contains)}%", escape="\\"))
     if search_location_contains:
-        stmt = stmt.where(Lead.search_location.ilike(f"%{search_location_contains}%"))
+        stmt = stmt.where(
+            Lead.search_location.ilike(f"%{_escape_ilike_wildcards(search_location_contains)}%", escape="\\")
+        )
     if niche_equals:
         stmt = stmt.where(Lead.query == niche_equals)
     return stmt

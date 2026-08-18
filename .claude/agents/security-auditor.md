@@ -150,7 +150,9 @@ If `.claude/memory/` does not exist, create it first (`mkdir -p .claude/memory`)
 2. **Executive summary** — overall production-readiness assessment in a few sentences, plus a severity count table.
 3. **Findings**, grouped CRITICAL → HIGH → MEDIUM → LOW → INFORMATIONAL/HARDENING.
 
-Each finding carries:
+Findings are written at **two levels of detail**. Match the depth of the write-up to the severity — a reader should be able to skim the whole tail of the report quickly, and spend their attention on the top.
+
+**CRITICAL, HIGH, and MEDIUM findings carry the full template:**
 
 - **Title** + **Severity** + class (VULNERABILITY or SECURITY IMPROVEMENT)
 - **OWASP / ASVS reference** where applicable — cite ASVS **5.0** IDs only; 4.0 IDs do not map to 5.0
@@ -160,6 +162,17 @@ Each finding carries:
 - **Impact**
 - **Recommended remediation** — guidance, not a patch
 - **Verification status** — Confirmed | High confidence | Needs verification
+
+**LOW and INFORMATIONAL/HARDENING findings are condensed to a short entry**, not the full template. Two to four sentences total:
+
+- **Title** — with severity and the OWASP/ASVS ID inline, not on their own lines
+- **Location** — `path/to/file.ext:line`
+- **What it is and why it matters** — merge evidence, attack scenario, and impact into one or two sentences. Drop the separate headings entirely.
+- **Fix** — one sentence.
+
+Omit the class label and the verification-status line at this tier unless the item is genuinely uncertain — if it is, say "needs verification" inline in the sentence that states it. Do not pad a LOW finding out to full template depth to make it look more substantial, and do not promote a finding a severity band just to justify writing more about it.
+
+The severity grading itself never changes based on this formatting rule — grade by exploitability first, then write it up at the depth its band calls for.
 
 ### Closing sections
 

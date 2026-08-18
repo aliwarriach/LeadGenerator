@@ -120,11 +120,20 @@ class FacebookScraper(BaseScraper):
     def _clean_facebook_link(href: str | None) -> str | None:
         if not href:
             return None
-        if not any(domain in href for domain in ("facebook.com/", "fb.com/")):
+        parsed = urlparse(href)
+        hostname = (parsed.hostname or "").lower()
+        # Host suffix match, not a substring test on the whole URL: the old
+        # check (`"facebook.com/" in href`) passed a URL like
+        # https://evil.test/facebook.com/page, which the unsandboxed browser
+        # (see SecurityIssues.md M-7) would then navigate to. See L-5.
+        if not (
+            hostname in ("facebook.com", "fb.com")
+            or hostname.endswith(".facebook.com")
+            or hostname.endswith(".fb.com")
+        ):
             return None
         if any(blocked in href for blocked in _BLOCKED_PATH_SUBSTRINGS):
             return None
-        parsed = urlparse(href)
         if not parsed.path or parsed.path == "/":
             return None
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
